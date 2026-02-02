@@ -8,14 +8,18 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ================= CONFIG =================
-MAX_WORKERS = 15
-COMPANY_NAME = "Swagelok"
+MAX_WORKERS = 12
 TIMEOUT = 20
+COMPANY_NAME = "Swagelok"
 
 # ================= SESSION STATE =================
-for k in ["results", "running", "stats"]:
-    if k not in st.session_state:
-        st.session_state[k] = None if k != "running" else False
+for key, default in {
+    "run": False,
+    "results": None,
+    "stats": None
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 # ================= EXTRACTOR =================
 class SwagelokExtractor:
@@ -32,36 +36,31 @@ class SwagelokExtractor:
             "Company": COMPANY_NAME,
             "URL": url,
             "UNSPSC Feature (Latest)": "Not Found",
-            "UNSPSC Code": "Not Found",
-            "Confidence Score": 0,
-            "_success": False
+            "UNSPSC Code": "Not Found"
         }
 
         if not isinstance(url, str) or not url.startswith("http"):
-            return row
+            return row, False
 
         try:
             r = self.session.get(url, timeout=TIMEOUT)
             if r.status_code != 200 or not r.text:
-                return row
+                return row, False
 
-            row["_success"] = True
             soup = BeautifulSoup(r.text, "lxml")
 
             part = self._extract_part(soup, url)
             if part:
                 row["Part"] = part
-                row["Confidence Score"] += 50
 
             feature, code = self._extract_unspsc(soup, r.text)
             if feature and code:
                 row["UNSPSC Feature (Latest)"] = feature
                 row["UNSPSC Code"] = code
-                row["Confidence Score"] += 50
 
-            return row
+            return row, True
         except Exception:
-            return row
+            return row, False
 
     def _extract_part(self, soup, url):
         for t in soup.find_all(string=re.compile(r"Part\s*#:?", re.I)):
@@ -69,8 +68,8 @@ class SwagelokExtractor:
             if m:
                 return m.group(1)
 
-        for row in soup.select("tr"):
-            tds = row.find_all("td")
+        for tr in soup.select("tr"):
+            tds = tr.find_all("td")
             if len(tds) >= 2 and "part" in tds[0].get_text(strip=True).lower():
                 val = tds[1].get_text(strip=True)
                 if "-" in val:
@@ -81,39 +80,26 @@ class SwagelokExtractor:
 
     def _extract_unspsc(self, soup, html):
         found = []
-        for row in soup.select("tr"):
-            tds = row.find_all("td")
+        for tr in soup.select("tr"):
+            tds = tr.find_all("td")
             if len(tds) >= 2:
                 vm = re.search(r"UNSPSC\s*\(([\d.]+)\)", tds[0].get_text())
                 cm = re.fullmatch(r"\d{6,8}", tds[1].get_text(strip=True))
                 if vm and cm:
                     found.append((tuple(map(int, vm.group(1).split("."))), vm.group(0), cm.group()))
-
         if not found:
             return None, None
-
         found.sort(reverse=True)
         return found[0][1], found[0][2]
 
 # ================= UI =================
-st.set_page_config("Swagelok UNSPSC Intelligence Platform", "⏱️", layout="wide")
+st.set_page_config("Swagelok UNSPSC Intelligence Platform", "🔍", layout="wide")
 
 st.markdown("""
-<style>
-.header {background:linear-gradient(135deg,#0f4c81,#1fa2ff);
-padding:2.2rem;border-radius:18px;color:white;text-align:center;margin-bottom:2rem}
-.card {background:#f8fafc;padding:1.4rem;border-radius:14px;
-border-left:6px solid #1fa2ff;margin-bottom:1.4rem}
-.good {color:#1e8449;font-weight:700}
-.bad {color:#c0392b;font-weight:700}
-.small {font-size:0.9rem;color:#555}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div class="header">
-<h1>⏱️ Swagelok UNSPSC Intelligence Platform</h1>
-<p>Fast • Measured • Transparent Execution</p>
+<div style="background:linear-gradient(135deg,#0f4c81,#1fa2ff);
+padding:2rem;border-radius:18px;color:white;text-align:center;margin-bottom:2rem">
+<h1>🔍 Swagelok UNSPSC Intelligence Platform</h1>
+<p>Fast • Measured • Reliable Execution</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -122,9 +108,10 @@ uploaded_file = st.file_uploader(
     type=["xlsx", "xls"]
 )
 
+# ================= PREP =================
+urls = []
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
-
     url_col = next(
         (c for c in df.columns if df[c].astype(str).str.contains("http", na=False).any()),
         None
@@ -135,78 +122,53 @@ if uploaded_file:
         st.stop()
 
     urls = df[url_col].tolist()
-    total = len(urls)
-    valid_urls = sum(isinstance(u, str) and u.startswith("http") for u in urls)
+    st.info(f"Detected URL column: **{url_col}**")
+    st.metric("Total Rows", len(urls))
 
-    st.markdown("### 📂 File Overview")
-    st.markdown(f"""
-    <div class="card">
-    <b>Total rows:</b> {total}<br>
-    <b>Valid URLs:</b> {valid_urls}<br>
-    <span class="small">
-    Only valid URLs are requested. Invalid rows are skipped automatically.
-    </span>
-    </div>
-    """, unsafe_allow_html=True)
+# ================= RUN BUTTON =================
+if urls:
+    if st.button("🚀 Run Extraction", use_container_width=True):
+        st.session_state.run = True
 
-    if st.button("🚀 Start Extraction", use_container_width=True, disabled=st.session_state.running):
-        st.session_state.running = True
+# ================= EXECUTION =================
+if st.session_state.run:
+    st.session_state.run = False  # reset immediately (CRITICAL)
 
-        extractor = SwagelokExtractor()
-        results = []
+    extractor = SwagelokExtractor()
+    results = []
+    success_count = 0
 
-        start_time = time.time()
+    start = time.time()
+    progress = st.progress(0.0)
 
-        with ThreadPoolExecutor(MAX_WORKERS) as exe:
-            futures = [exe.submit(extractor.extract, u) for u in urls]
-            for f in as_completed(futures):
-                results.append(f.result())
+    with ThreadPoolExecutor(MAX_WORKERS) as exe:
+        futures = [exe.submit(extractor.extract, u) for u in urls]
+        for i, f in enumerate(as_completed(futures), 1):
+            row, ok = f.result()
+            results.append(row)
+            success_count += int(ok)
+            progress.progress(i / len(urls))
 
-        end_time = time.time()
+    elapsed = round(time.time() - start, 2)
 
-        df_out = pd.DataFrame(results)
+    out_df = pd.DataFrame(results)
 
-        # -------- STATS --------
-        elapsed = round(end_time - start_time, 2)
-        success = df_out["_success"].sum()
-        part_ok = (df_out["Part"] != "Not Found").sum()
-        unspsc_ok = (df_out["UNSPSC Code"] != "Not Found").sum()
-        avg_time = round(elapsed / total, 3)
-        throughput = round(total / elapsed, 2) if elapsed > 0 else 0
+    st.session_state.results = out_df
+    st.session_state.stats = {
+        "Total Rows": len(urls),
+        "Successful Pages": success_count,
+        "Elapsed Time (sec)": elapsed,
+        "Avg Time / URL (sec)": round(elapsed / len(urls), 3)
+    }
 
-        st.session_state.results = df_out.drop(columns=["_success"])
-        st.session_state.stats = {
-            "elapsed": elapsed,
-            "avg_time": avg_time,
-            "throughput": throughput,
-            "success": success,
-            "part_ok": part_ok,
-            "unspsc_ok": unspsc_ok,
-            "total": total
-        }
-        st.session_state.running = False
-
-# ================= RESULTS + TIME EXPLANATION =================
+# ================= RESULTS =================
 if st.session_state.results is not None:
+    st.success("✅ Extraction completed successfully")
+
     stats = st.session_state.stats
-
-    st.markdown("### ⏱️ Execution Analysis")
-    st.markdown(f"""
-    <div class="card">
-    <b>Total execution time:</b> {stats["elapsed"]} seconds<br>
-    <b>Average time per URL:</b> {stats["avg_time"]} seconds<br>
-    <b>Processing speed:</b> {stats["throughput"]} URLs / second<br><br>
-
-    <b>Pages fetched successfully:</b> {stats["success"]} / {stats["total"]}<br>
-    <b>Parts found:</b> {stats["part_ok"]}<br>
-    <b>UNSPSC found:</b> {stats["unspsc_ok"]}<br>
-
-    <p class="small">
-    ⓘ Time depends mainly on Swagelok server response, not your file size.
-    Parallel workers ({MAX_WORKERS}) are used to optimize speed safely.
-    </p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("### ⏱ Execution Summary")
+    for k, v in stats.items():
+        st.write(f"**{k}:** {v}")
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
@@ -215,7 +177,7 @@ if st.session_state.results is not None:
             .to_excel(writer, sheet_name="Execution Stats")
 
     st.download_button(
-        "📥 Download Excel (Results + Execution Stats)",
+        "📥 Download Excel",
         buffer.getvalue(),
         "swagelok_unspsc_output.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
