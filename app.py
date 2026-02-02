@@ -8,8 +8,9 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ================= CONFIG =================
-MAX_WORKERS = 10
+MAX_WORKERS = 15
 COMPANY_NAME = "Swagelok"
+TIMEOUT = 20
 
 # ================= SESSION STATE =================
 if "results" not in st.session_state:
@@ -21,63 +22,75 @@ if "running" not in st.session_state:
 class SwagelokExtractor:
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "Mozilla/5.0"})
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
 
     def extract(self, url):
-        result = {
+        row = {
             "Part": "Not Found",
             "Company": COMPANY_NAME,
             "URL": url,
             "UNSPSC Feature (Latest)": "Not Found",
-            "UNSPSC Code": "Not Found"
+            "UNSPSC Code": "Not Found",
+            "Confidence Score": 0
         }
 
         if not isinstance(url, str) or not url.startswith("http"):
-            return result
+            return row
 
         try:
-            r = self.session.get(url, timeout=25)
+            r = self.session.get(url, timeout=TIMEOUT)
             if r.status_code != 200 or not r.text:
-                return result
+                return row
 
-            soup = BeautifulSoup(r.text, "html.parser")
+            soup = BeautifulSoup(r.text, "lxml")
 
-            part = self._extract_part_from_page(soup, url)
+            part = self._extract_part(soup, url)
             if part:
-                result["Part"] = part
+                row["Part"] = part
+                row["Confidence Score"] += 50
 
-            feature, code = self._extract_latest_unspsc(soup, r.text)
+            feature, code = self._extract_unspsc(soup, r.text)
             if feature and code:
-                result["UNSPSC Feature (Latest)"] = feature
-                result["UNSPSC Code"] = code
+                row["UNSPSC Feature (Latest)"] = feature
+                row["UNSPSC Code"] = code
+                row["Confidence Score"] += 50
 
-            return result
+            return row
+
         except Exception:
-            return result
+            return row
 
-    def _extract_part_from_page(self, soup, url):
+    # ---------- PART ----------
+    def _extract_part(self, soup, url):
         for t in soup.find_all(string=re.compile(r"Part\s*#:?", re.I)):
-            m = re.search(r"Part\s*#:\s*([A-Z0-9\-]+)", t.parent.get_text())
+            m = re.search(r"Part\s*#:\s*([A-Z0-9\-]+)", t.parent.get_text(" ", strip=True))
             if m:
                 return m.group(1)
 
-        for row in soup.find_all("tr"):
+        for row in soup.select("tr"):
             tds = row.find_all("td")
-            if len(tds) >= 2 and "part" in tds[0].get_text().lower():
-                return tds[1].get_text(strip=True)
+            if len(tds) >= 2 and "part" in tds[0].get_text(strip=True).lower():
+                val = tds[1].get_text(strip=True)
+                if "-" in val:
+                    return val
 
         m = re.search(r"part=([A-Z0-9\-]+)", url, re.I)
         return m.group(1) if m else None
 
-    def _extract_latest_unspsc(self, soup, html):
+    # ---------- UNSPSC ----------
+    def _extract_unspsc(self, soup, html):
         found = []
-        for row in soup.find_all("tr"):
+
+        for row in soup.select("tr"):
             tds = row.find_all("td")
             if len(tds) >= 2:
-                v = re.search(r"UNSPSC\s*\(([\d.]+)\)", tds[0].get_text())
-                c = re.fullmatch(r"\d{6,8}", tds[1].get_text(strip=True))
-                if v and c:
-                    found.append((tuple(map(int, v.group(1).split("."))), v.group(0), c.group()))
+                vm = re.search(r"UNSPSC\s*\(([\d.]+)\)", tds[0].get_text())
+                cm = re.fullmatch(r"\d{6,8}", tds[1].get_text(strip=True))
+                if vm and cm:
+                    found.append((tuple(map(int, vm.group(1).split("."))), vm.group(0), cm.group()))
 
         if not found:
             return None, None
@@ -89,10 +102,20 @@ class SwagelokExtractor:
 st.set_page_config("Swagelok UNSPSC Intelligence Platform", "🔍", layout="wide")
 
 st.markdown("""
-<div style="background:linear-gradient(135deg,#0f4c81,#1fa2ff);
-padding:2.2rem;border-radius:18px;color:white;text-align:center;margin-bottom:2rem">
+<style>
+.header {background:linear-gradient(135deg,#0f4c81,#1fa2ff);
+padding:2.2rem;border-radius:18px;color:white;text-align:center;margin-bottom:2rem}
+.card {background:#f8fafc;padding:1.4rem;border-radius:14px;
+border-left:6px solid #1fa2ff;margin-bottom:1.4rem}
+.good {color:#1e8449;font-weight:700}
+.bad {color:#c0392b;font-weight:700}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="header">
 <h1>🔍 Swagelok UNSPSC Intelligence Platform</h1>
-<p>Page-Verified Parts • Latest UNSPSC • Audit-Ready</p>
+<p>Fast • Page-Verified • Audit-Ready</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -116,45 +139,81 @@ if uploaded_file:
     urls = df[url_col].tolist()
     total = len(urls)
 
-    st.info(f"🔗 URL column detected: **{url_col}**")
-    st.metric("📊 Total Rows", total)
+    valid_urls = sum(isinstance(u, str) and u.startswith("http") for u in urls)
+    coverage = round((valid_urls / total) * 100, 2)
+
+    # ---------- FILE ANALYSIS ----------
+    st.markdown("### 📂 File Analysis")
+    st.markdown(f"""
+    <div class="card">
+    <b>Total Rows:</b> {total}<br>
+    <b>Valid URLs:</b> {valid_urls}<br>
+    <b>Coverage:</b>
+    <span class="{ 'good' if coverage >= 90 else 'bad' }">{coverage}%</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     # ---------- RUN BUTTON ----------
-    if st.button(
-        "🚀 Start Intelligent Extraction",
-        use_container_width=True,
-        disabled=st.session_state.running
-    ):
+    if st.button("🚀 Start Fast Extraction", use_container_width=True, disabled=st.session_state.running):
         st.session_state.running = True
         extractor = SwagelokExtractor()
         results = []
 
         progress = st.progress(0.0)
-        status = st.empty()
 
         with ThreadPoolExecutor(MAX_WORKERS) as exe:
             futures = [exe.submit(extractor.extract, u) for u in urls]
             for i, f in enumerate(as_completed(futures), 1):
                 results.append(f.result())
                 progress.progress(i / total)
-                status.markdown(
-                    f"🔄 Processing <b>{i}</b> / <b>{total}</b>",
-                    unsafe_allow_html=True
-                )
 
-        st.session_state.results = pd.DataFrame(results)
+        out_df = pd.DataFrame(results)
+        st.session_state.results = out_df
         st.session_state.running = False
-        st.success("✅ Extraction completed successfully")
 
-# ================= RESULTS (PERSISTENT) =================
+# ================= RESULTS =================
 if st.session_state.results is not None:
     out_df = st.session_state.results
 
+    part_rate = round((out_df["Part"] != "Not Found").mean() * 100, 2)
+    unspsc_rate = round((out_df["UNSPSC Code"] != "Not Found").mean() * 100, 2)
+    avg_conf = round(out_df["Confidence Score"].mean(), 2)
+
+    # ---------- OUTPUT ANALYSIS ----------
+    st.markdown("### 📊 Output Analysis")
+    st.markdown(f"""
+    <div class="card">
+    <b>Part Detection:</b>
+    <span class="{ 'good' if part_rate >= 90 else 'bad' }">{part_rate}%</span><br>
+    <b>UNSPSC Coverage:</b>
+    <span class="{ 'good' if unspsc_rate >= 85 else 'bad' }">{unspsc_rate}%</span><br>
+    <b>Average Confidence Score:</b> {avg_conf}
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ---------- QA SUMMARY SHEET ----------
+    qa_summary = pd.DataFrame({
+        "Metric": [
+            "Total Rows",
+            "Parts Found %",
+            "UNSPSC Found %",
+            "Average Confidence Score"
+        ],
+        "Value": [
+            total,
+            part_rate,
+            unspsc_rate,
+            avg_conf
+        ]
+    })
+
     buffer = BytesIO()
-    out_df.to_excel(buffer, index=False)
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        out_df.to_excel(writer, index=False, sheet_name="Results")
+        qa_summary.to_excel(writer, index=False, sheet_name="QA Summary")
 
     st.download_button(
-        "📥 Download Excel Results",
+        "📥 Download Excel (Results + QA Summary)",
         buffer.getvalue(),
         "swagelok_unspsc_output.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
