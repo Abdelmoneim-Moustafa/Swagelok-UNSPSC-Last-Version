@@ -60,10 +60,6 @@ class SwagelokExtractor:
             if len(tds) >= 2 and "part" in tds[0].get_text().lower():
                 return tds[1].get_text(strip=True)
 
-        h1 = soup.find("h1")
-        if h1 and "-" in h1.get_text():
-            return h1.get_text(strip=True)
-
         m = re.search(r"part=([A-Z0-9\-]+)", url, re.I)
         return m.group(1) if m else None
 
@@ -84,34 +80,72 @@ class SwagelokExtractor:
         return found[0][1], found[0][2]
 
 # ================= UI =================
-st.set_page_config("Swagelok UNSPSC Dashboard", "📊", layout="wide")
-st.title("📊 Swagelok UNSPSC Intelligence Dashboard")
-st.caption("Extraction • Validation • Data Quality Analysis")
+st.set_page_config("Swagelok UNSPSC Intelligence", "📊", layout="wide")
 
-# ================= FILE UPLOAD =================
+st.markdown("""
+<style>
+.card {
+    background:#f8fafc;
+    padding:20px;
+    border-radius:14px;
+    border-left:6px solid #1f77b4;
+    margin-bottom:20px;
+}
+.metric {
+    font-size:26px;
+    font-weight:800;
+    color:#1f77b4;
+}
+.label {
+    font-size:14px;
+    color:#555;
+}
+.bad {color:#c0392b;font-weight:700;}
+.good {color:#27ae60;font-weight:700;}
+table {
+    width:100%;
+    border-collapse:collapse;
+}
+th,td {
+    padding:10px;
+    border-bottom:1px solid #ddd;
+}
+th {background:#eef2f7;}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("## 🔍 Swagelok UNSPSC Intelligence Platform")
+st.markdown("**HTML-based audit & data-quality dashboard**")
+
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
 
-    # -------- FILE ANALYSIS --------
-    st.subheader("📂 File Analysis")
-    url_col = next((c for c in df.columns if df[c].astype(str).str.contains("http", na=False).any()), None)
+    url_col = next(
+        (c for c in df.columns if df[c].astype(str).str.contains("http", na=False).any()),
+        None
+    )
 
     total_rows = len(df)
     valid_urls = df[url_col].astype(str).str.startswith("http").sum()
     invalid_urls = total_rows - valid_urls
+    coverage = round((valid_urls / total_rows) * 100, 2)
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Rows", total_rows)
-    col2.metric("Valid URLs", valid_urls)
-    col3.metric("Invalid / Empty URLs", invalid_urls)
+    # -------- FILE ANALYSIS (HTML) --------
+    st.markdown("### 📂 File Analysis")
+    st.markdown(f"""
+    <div class="card">
+        <div class="metric">{total_rows}</div>
+        <div class="label">Total Rows</div><br>
 
-    pie_df = pd.DataFrame({
-        "Type": ["Valid URLs", "Invalid URLs"],
-        "Count": [valid_urls, invalid_urls]
-    })
-    st.bar_chart(pie_df.set_index("Type"))
+        <div class="metric">{valid_urls}</div>
+        <div class="label">Valid URLs</div><br>
+
+        <div class="metric { 'good' if coverage > 90 else 'bad' }">{coverage}%</div>
+        <div class="label">URL Coverage</div>
+    </div>
+    """, unsafe_allow_html=True)
 
     urls = df[url_col].tolist()
 
@@ -126,42 +160,43 @@ if uploaded_file:
 
         out_df = pd.DataFrame(results)
 
-        # -------- OUTPUT ANALYSIS --------
-        st.subheader("📊 Output Analysis")
+        # -------- OUTPUT ANALYSIS (HTML) --------
+        part_ok = (out_df["Part"] != "Not Found").sum()
+        unspsc_ok = (out_df["UNSPSC Code"] != "Not Found").sum()
 
-        part_found = (out_df["Part"] != "Not Found").sum()
-        unspsc_found = (out_df["UNSPSC Code"] != "Not Found").sum()
+        part_rate = round((part_ok / total_rows) * 100, 2)
+        unspsc_rate = round((unspsc_ok / total_rows) * 100, 2)
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Parts Found", part_found)
-        col2.metric("UNSPSC Found", unspsc_found)
-        col3.metric("Success Rate %", round((unspsc_found / total_rows) * 100, 2))
+        st.markdown("### 📊 Output Analysis")
+        st.markdown(f"""
+        <div class="card">
+            <b>Part Detection:</b> <span class="{ 'good' if part_rate > 90 else 'bad' }">{part_rate}%</span><br>
+            <b>UNSPSC Coverage:</b> <span class="{ 'good' if unspsc_rate > 85 else 'bad' }">{unspsc_rate}%</span><br>
+            <b>Rows Needing Review:</b> {total_rows - unspsc_ok}
+        </div>
+        """, unsafe_allow_html=True)
 
-        chart_df = pd.DataFrame({
-            "Metric": ["Part Found", "Part Missing"],
-            "Count": [part_found, total_rows - part_found]
-        })
-        st.bar_chart(chart_df.set_index("Metric"))
-
-        # -------- DATA QUALITY TABLE --------
-        st.subheader("⚠ Rows Needing Review")
+        # -------- ISSUES TABLE --------
         issues = out_df[
             (out_df["Part"] == "Not Found") |
             (out_df["UNSPSC Code"] == "Not Found")
         ]
-        st.dataframe(issues, use_container_width=True)
+
+        if not issues.empty:
+            st.markdown("### ⚠ Rows Needing Attention")
+            st.markdown(issues.to_html(index=False), unsafe_allow_html=True)
 
         # -------- DOWNLOAD --------
         buffer = BytesIO()
         out_df.to_excel(buffer, index=False)
 
         st.download_button(
-            "📥 Download Excel Output",
+            "📥 Download Excel",
             buffer.getvalue(),
             "swagelok_unspsc_output.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
 
-        st.subheader("✅ Full Output")
+        st.markdown("### ✅ Full Output")
         st.dataframe(out_df, use_container_width=True)
