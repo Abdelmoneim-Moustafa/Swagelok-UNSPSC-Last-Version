@@ -7,161 +7,189 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# ================= CONFIG =================
+# =========================================================
+# CONFIG
+# =========================================================
 MAX_WORKERS = 16
-TIMEOUT = 20
+REQUEST_TIMEOUT = 20
 COMPANY_NAME = "Swagelok"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 }
 
-# ================= PAGE =================
-st.set_page_config(
-    page_title="Swagelok UNSPSC Intelligence Platform",
-    page_icon="🔎",
-    layout="wide"
-)
-
-st.markdown("""
-<style>
-.header {
-    background: linear-gradient(135deg, #0f4c81, #1fa2ff);
-    padding: 2.5rem;
-    border-radius: 18px;
-    color: white;
-    text-align: center;
-    margin-bottom: 2rem;
-}
-.header h1 { font-size: 2.6rem; font-weight: 800; }
-.header p { font-size: 1.1rem; opacity: 0.95; }
-.box {
-    background: #f7f9fc;
-    padding: 1.5rem;
-    border-radius: 14px;
-    border-left: 6px solid #1fa2ff;
-    margin-bottom: 1.5rem;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div class="header">
-<h1>🔎 Swagelok UNSPSC Intelligence Platform</h1>
-<p>Page-Verified Parts • Latest UNSPSC • Zero Guessing 😎</p>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div class="box">
-<b>What this tool guarantees:</b><br>
-✔ Part number extracted ONLY from <b>Part #:</b> on page<br>
-✔ Latest UNSPSC version (highest number)<br>
-✔ URL → Part → UNSPSC relationship validated<br>
-✔ No missing data • No duplicated parts • No guessing<br>
-⚡ Optimized for large files
-</div>
-""", unsafe_allow_html=True)
-
-# ================= HELPERS =================
-def detect_urls(df: pd.DataFrame) -> list[str]:
-    urls = []
-    for col in df.columns:
-        series = df[col].astype(str)
-        found = series.str.extractall(
-            r"(https?://[^\s,;]+)",
-            flags=re.IGNORECASE
-        )[0].tolist()
-        urls.extend(found)
-    return list(dict.fromkeys(urls))  # preserve order, unique
-
-
-def parse_version(v):
-    try:
-        return tuple(int(x) for x in v.split("."))
-    except:
-        return (0,)
-
-
-# ================= SCRAPER =================
+# =========================================================
+# SCRAPER CORE
+# =========================================================
 class SwagelokScraper:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
 
     def scrape(self, url: str):
-        base = {
+        """Scrape ONE product page"""
+        result = {
             "Part": None,
             "Company": COMPANY_NAME,
             "URL": url,
             "UNSPSC Feature (Latest)": None,
-            "UNSPSC Code": None
+            "UNSPSC Code": None,
         }
 
+        if not isinstance(url, str) or not url.startswith("http"):
+            return None
+
         try:
-            r = self.session.get(url, timeout=TIMEOUT)
-            if r.status_code != 200:
+            r = self.session.get(url, timeout=REQUEST_TIMEOUT)
+            if r.status_code != 200 or not r.text:
                 return None
 
             soup = BeautifulSoup(r.text, "html.parser")
 
-            # -------- PART (STRICT) --------
-            part = None
-            part_label = soup.find(string=re.compile(r"Part\s*#:?", re.I))
-            if part_label:
-                text = part_label.parent.get_text(" ", strip=True)
-                m = re.search(r"Part\s*#:\s*([A-Z0-9.\-]+)", text)
-                if m:
-                    part = m.group(1)
+            part = self._extract_part(soup)
+            unspsc_feature, unspsc_code = self._extract_latest_unspsc(soup)
 
-            if not part:
-                return None  # never guess part
-
-            base["Part"] = part
-
-            # -------- UNSPSC (LATEST) --------
-            found = []
-            for row in soup.select("table tr"):
-                tds = row.find_all("td")
-                if len(tds) >= 2:
-                    label = tds[0].get_text(strip=True)
-                    value = tds[1].get_text(strip=True)
-
-                    m = re.search(r"UNSPSC\s*\(([\d.]+)\)", label)
-                    if m and re.fullmatch(r"\d{6,8}", value):
-                        found.append((parse_version(m.group(1)), label, value))
-
-            if not found:
+            if not part or not unspsc_code:
                 return None
 
-            found.sort(key=lambda x: x[0], reverse=True)
-            base["UNSPSC Feature (Latest)"] = found[0][1]
-            base["UNSPSC Code"] = found[0][2]
+            result["Part"] = part
+            result["UNSPSC Feature (Latest)"] = unspsc_feature
+            result["UNSPSC Code"] = unspsc_code
 
-            return base
+            return result
 
         except Exception:
             return None
 
+    # -----------------------------------------------------
+    # PART NUMBER (STRICT)
+    # -----------------------------------------------------
+    def _extract_part(self, soup):
+        """
+        ONLY accept full part from:
+        Part #: CWS-C.040-.405-P
+        """
 
-# ================= FILE =================
-uploaded = st.file_uploader(
+        for txt in soup.find_all(string=re.compile(r"Part\s*#:", re.I)):
+            block = txt.parent.get_text(" ", strip=True)
+            match = re.search(r"Part\s*#:\s*([A-Z0-9.\-]+)", block)
+            if match:
+                return match.group(1).strip()
+
+        return None
+
+    # -----------------------------------------------------
+    # UNSPSC (LATEST VERSION ONLY)
+    # -----------------------------------------------------
+    def _extract_latest_unspsc(self, soup):
+        found = []
+
+        for row in soup.select("tr"):
+            cells = row.find_all("td")
+            if len(cells) != 2:
+                continue
+
+            label = cells[0].get_text(strip=True)
+            value = cells[1].get_text(strip=True)
+
+            if not value.isdigit():
+                continue
+
+            version_match = re.search(r"UNSPSC\s*\(([\d.]+)\)", label)
+            if version_match:
+                version = self._parse_version(version_match.group(1))
+                found.append((version, label, value))
+
+        if not found:
+            return None, None
+
+        found.sort(key=lambda x: x[0], reverse=True)
+        return found[0][1], found[0][2]
+
+    @staticmethod
+    def _parse_version(v):
+        try:
+            return tuple(int(x) for x in v.split("."))
+        except Exception:
+            return (0,)
+
+# =========================================================
+# STREAMLIT UI
+# =========================================================
+st.set_page_config(
+    page_title="Swagelok UNSPSC Intelligence Platform",
+    page_icon="🔎",
+    layout="wide"
+)
+
+# ------------------ STYLE ------------------
+st.markdown("""
+<style>
+.header {
+    background: linear-gradient(135deg, #0f4c81, #1fa2ff);
+    padding: 2.6rem;
+    border-radius: 20px;
+    color: white;
+    text-align: center;
+    margin-bottom: 2rem;
+    box-shadow: 0 18px 40px rgba(0,0,0,.35);
+}
+.header h1 { font-size: 2.6rem; font-weight: 800; }
+.header p { opacity: .95; }
+
+.info {
+    background: white;
+    color: #1f2937;
+    padding: 1.6rem 2rem;
+    border-radius: 16px;
+    border-left: 6px solid #1fa2ff;
+    box-shadow: 0 12px 25px rgba(0,0,0,.2);
+    margin-bottom: 2rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ------------------ HEADER ------------------
+st.markdown("""
+<div class="header">
+    <h1>🔎 Swagelok UNSPSC Intelligence Platform</h1>
+    <p>Page-Verified Parts • Latest UNSPSC • Zero Guessing 😎</p>
+</div>
+""", unsafe_allow_html=True)
+
+# ------------------ INFO ------------------
+st.markdown("""
+<div class="info">
+<b>Data rules (strict):</b><br><br>
+• Part is extracted only from <b>“Part #:”</b> (full code, no truncation)<br>
+• UNSPSC is taken only from <b>Specifications table</b><br>
+• Highest UNSPSC version is selected automatically<br>
+• One unique Part per row (duplicates removed)<br>
+• Rows with missing or invalid data are excluded<br>
+</div>
+""", unsafe_allow_html=True)
+
+# =========================================================
+# FILE UPLOAD
+# =========================================================
+uploaded_file = st.file_uploader(
     "📤 Upload Excel file (URLs anywhere, any column)",
     type=["xlsx", "xls"]
 )
 
-if uploaded:
-    df_input = pd.read_excel(uploaded)
-    urls = detect_urls(df_input)
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
 
-    if not urls:
-        st.error("❌ No Swagelok URLs detected.")
-        st.stop()
+    # ------------------ URL DETECTION ------------------
+    urls = []
+    for col in df.columns:
+        urls.extend(df[col].dropna().astype(str).tolist())
+
+    urls = list({u for u in urls if u.startswith("http")})
 
     st.success(f"🔗 {len(urls)} URLs detected")
-    st.metric("Total URLs", len(urls))
 
-    if st.button("🚀 Start Verified Extraction", use_container_width=True):
+    if st.button("🚀 Start Extraction", use_container_width=True):
         scraper = SwagelokScraper()
         results = []
 
@@ -169,46 +197,41 @@ if uploaded:
         status = st.empty()
         start = time.time()
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as exe:
-            futures = [exe.submit(scraper.scrape, u) for u in urls]
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(scraper.scrape, u) for u in urls]
 
-            for i, f in enumerate(as_completed(futures), 1):
-                res = f.result()
+            for i, future in enumerate(as_completed(futures), 1):
+                res = future.result()
                 if res:
                     results.append(res)
+
                 progress.progress(i / len(urls))
-                status.markdown(
-                    f"Processing <b>{i}</b> / <b>{len(urls)}</b>",
-                    unsafe_allow_html=True
-                )
+                status.write(f"Processing {i}/{len(urls)}")
 
-        elapsed = round(time.time() - start, 1)
+        elapsed = round(time.time() - start, 2)
 
-        if not results:
-            st.error("❌ No valid products extracted.")
-            st.stop()
+        # ------------------ CLEAN OUTPUT ------------------
+        out_df = pd.DataFrame(results)
 
-        df_out = pd.DataFrame(results)
+        if not out_df.empty:
+            out_df = out_df.drop_duplicates(subset=["Part"])
+            out_df = out_df.dropna()
 
-        # -------- VALIDATION --------
-        df_out.drop_duplicates(subset=["Part"], inplace=True)
-        df_out.dropna(inplace=True)
+        st.success(
+            f"✅ Finished in {elapsed} seconds | "
+            f"{len(out_df)} valid unique parts"
+        )
 
-        st.success(f"✅ Completed in {elapsed} seconds")
-
-        st.metric("Valid Products", len(df_out))
-        st.metric("Avg sec / URL", round(elapsed / len(urls), 2))
-
-        # -------- DOWNLOAD --------
+        # ------------------ DOWNLOAD ------------------
         buffer = BytesIO()
-        df_out.to_excel(buffer, index=False)
+        out_df.to_excel(buffer, index=False)
 
         st.download_button(
             "📥 Download Excel",
             buffer.getvalue(),
-            file_name="swagelok_unspsc_output.xlsx",
+            "swagelok_unspsc_output.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
 
-        st.dataframe(df_out, use_container_width=True)
+        st.dataframe(out_df, use_container_width=True)
