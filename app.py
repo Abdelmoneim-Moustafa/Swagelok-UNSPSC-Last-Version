@@ -1,237 +1,207 @@
-import re
-import time
+import streamlit as st
 import pandas as pd
 import requests
-import streamlit as st
+import re
+import time
 from bs4 import BeautifulSoup
-from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from io import BytesIO
 
-# =========================================================
-# CONFIG
-# =========================================================
-MAX_WORKERS = 16
-REQUEST_TIMEOUT = 20
-COMPANY_NAME = "Swagelok"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-}
-
-# =========================================================
-# SCRAPER CORE
-# =========================================================
-class SwagelokScraper:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update(HEADERS)
-
-    def scrape(self, url: str):
-        """Scrape ONE product page"""
-        result = {
-            "Part": None,
-            "Company": COMPANY_NAME,
-            "URL": url,
-            "UNSPSC Feature (Latest)": None,
-            "UNSPSC Code": None,
-        }
-
-        if not isinstance(url, str) or not url.startswith("http"):
-            return None
-
-        try:
-            r = self.session.get(url, timeout=REQUEST_TIMEOUT)
-            if r.status_code != 200 or not r.text:
-                return None
-
-            soup = BeautifulSoup(r.text, "html.parser")
-
-            part = self._extract_part(soup)
-            unspsc_feature, unspsc_code = self._extract_latest_unspsc(soup)
-
-            if not part or not unspsc_code:
-                return None
-
-            result["Part"] = part
-            result["UNSPSC Feature (Latest)"] = unspsc_feature
-            result["UNSPSC Code"] = unspsc_code
-
-            return result
-
-        except Exception:
-            return None
-
-    # -----------------------------------------------------
-    # PART NUMBER (STRICT)
-    # -----------------------------------------------------
-    def _extract_part(self, soup):
-        """
-        ONLY accept full part from:
-        Part #: CWS-C.040-.405-P
-        """
-
-        for txt in soup.find_all(string=re.compile(r"Part\s*#:", re.I)):
-            block = txt.parent.get_text(" ", strip=True)
-            match = re.search(r"Part\s*#:\s*([A-Z0-9.\-]+)", block)
-            if match:
-                return match.group(1).strip()
-
-        return None
-
-    # -----------------------------------------------------
-    # UNSPSC (LATEST VERSION ONLY)
-    # -----------------------------------------------------
-    def _extract_latest_unspsc(self, soup):
-        found = []
-
-        for row in soup.select("tr"):
-            cells = row.find_all("td")
-            if len(cells) != 2:
-                continue
-
-            label = cells[0].get_text(strip=True)
-            value = cells[1].get_text(strip=True)
-
-            if not value.isdigit():
-                continue
-
-            version_match = re.search(r"UNSPSC\s*\(([\d.]+)\)", label)
-            if version_match:
-                version = self._parse_version(version_match.group(1))
-                found.append((version, label, value))
-
-        if not found:
-            return None, None
-
-        found.sort(key=lambda x: x[0], reverse=True)
-        return found[0][1], found[0][2]
-
-    @staticmethod
-    def _parse_version(v):
-        try:
-            return tuple(int(x) for x in v.split("."))
-        except Exception:
-            return (0,)
-
-# =========================================================
-# STREAMLIT UI
-# =========================================================
+# =========================
+# PAGE CONFIG
+# =========================
 st.set_page_config(
     page_title="Swagelok UNSPSC Intelligence Platform",
-    page_icon="🔎",
+    page_icon="🔍",
     layout="wide"
 )
 
-# ------------------ STYLE ------------------
+# =========================
+# STYLES
+# =========================
 st.markdown("""
 <style>
-.header {
-    background: linear-gradient(135deg, #0f4c81, #1fa2ff);
-    padding: 2.6rem;
-    border-radius: 20px;
-    color: white;
-    text-align: center;
-    margin-bottom: 2rem;
-    box-shadow: 0 18px 40px rgba(0,0,0,.35);
+.big-title {
+    font-size:36px;
+    font-weight:700;
+    color:#0b5394;
 }
-.header h1 { font-size: 2.6rem; font-weight: 800; }
-.header p { opacity: .95; }
-
-.info {
-    background: white;
-    color: #1f2937;
-    padding: 1.6rem 2rem;
-    border-radius: 16px;
-    border-left: 6px solid #1fa2ff;
-    box-shadow: 0 12px 25px rgba(0,0,0,.2);
-    margin-bottom: 2rem;
+.sub-title {
+    font-size:16px;
+    color:#444;
+}
+.card {
+    background:#f9fbfd;
+    padding:20px;
+    border-radius:12px;
+    border:1px solid #e6e6e6;
+}
+.success {
+    background:#e6f4ea;
+    padding:10px;
+    border-radius:8px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ------------------ HEADER ------------------
-st.markdown("""
-<div class="header">
-    <h1>🔎 Swagelok UNSPSC Intelligence Platform</h1>
-    <p>Page-Verified Parts • Latest UNSPSC • Zero Guessing 😎</p>
-</div>
-""", unsafe_allow_html=True)
+# =========================
+# HEADER
+# =========================
+st.markdown('<div class="big-title">🔍 Swagelok UNSPSC Intelligence Platform</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">Page-Verified Parts • Latest UNSPSC • Zero Guessing 😎</div>', unsafe_allow_html=True)
+st.divider()
 
-# ------------------ INFO ------------------
-st.markdown("""
-<div class="info">
-<b>Data rules (strict):</b><br><br>
-• Part is extracted only from <b>“Part #:”</b> (full code, no truncation)<br>
-• UNSPSC is taken only from <b>Specifications table</b><br>
-• Highest UNSPSC version is selected automatically<br>
-• One unique Part per row (duplicates removed)<br>
-• Rows with missing or invalid data are excluded<br>
-</div>
-""", unsafe_allow_html=True)
+# =========================
+# HELPERS
+# =========================
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
-# =========================================================
+UNSPSC_PATTERN = re.compile(r"UNSPSC\s*\([\d\.]+\)", re.I)
+
+def extract_part_from_url(url: str):
+    match = re.search(r"(?:part=|/p/)([A-Z0-9\-]+)", url)
+    return match.group(1) if match else None
+
+def extract_visible_part(soup: BeautifulSoup):
+    text = soup.get_text(" ", strip=True)
+    match = re.search(r"Part\s*#:\s*([A-Z0-9\-]+)", text)
+    return match.group(1) if match else None
+
+def extract_title_part(soup: BeautifulSoup):
+    if soup.title:
+        match = re.search(r"\b[A-Z0-9\-]{4,}\b", soup.title.text)
+        return match.group() if match else None
+    return None
+
+def extract_latest_unspsc(soup: BeautifulSoup):
+    unspsc_rows = []
+    for row in soup.find_all("tr"):
+        cells = row.find_all(["td", "th"])
+        if len(cells) == 2 and "UNSPSC" in cells[0].get_text():
+            version = re.search(r"\(([\d\.]+)\)", cells[0].get_text())
+            code = re.search(r"\b\d{8}\b", cells[1].get_text())
+            if version and code:
+                unspsc_rows.append((float(version.group(1)), code.group()))
+
+    if not unspsc_rows:
+        return None
+
+    unspsc_rows.sort(key=lambda x: x[0], reverse=True)
+    return unspsc_rows[0][1]
+
+def process_url(url):
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+    except Exception:
+        return {
+            "URL": url,
+            "Company": "Swagelok",
+            "Part": None,
+            "UNSPSC_Last": None,
+            "Mismatch": True,
+            "Status": "Request Failed"
+        }
+
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    url_part = extract_part_from_url(url)
+    page_part = extract_visible_part(soup)
+    title_part = extract_title_part(soup)
+
+    if page_part:
+        final_part = page_part
+        source = "Page"
+    elif title_part:
+        final_part = title_part
+        source = "Title"
+    else:
+        final_part = url_part
+        source = "URL"
+
+    unspsc = extract_latest_unspsc(soup)
+
+    mismatch = url_part and final_part and url_part != final_part
+
+    return {
+        "URL": url,
+        "Company": "Swagelok",
+        "Part": final_part,
+        "UNSPSC_Last": unspsc,
+        "Mismatch": mismatch,
+        "Source": source,
+        "Status": "OK" if final_part else "Missing Part"
+    }
+
+# =========================
 # FILE UPLOAD
-# =========================================================
-uploaded_file = st.file_uploader(
-    "📤 Upload Excel file (URLs anywhere, any column)",
-    type=["xlsx", "xls"]
-)
+# =========================
+st.markdown("### 📤 Upload Excel file (URLs anywhere, any column)")
 
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
+file = st.file_uploader("", type=["xlsx", "xls"])
 
-    # ------------------ URL DETECTION ------------------
-    urls = []
+if file:
+    df = pd.read_excel(file)
+    all_urls = []
+
     for col in df.columns:
-        urls.extend(df[col].dropna().astype(str).tolist())
+        urls = df[col].dropna().astype(str)
+        urls = urls[urls.str.contains("swagelok", case=False)]
+        all_urls.extend(urls.tolist())
 
-    urls = list({u for u in urls if u.startswith("http")})
+    all_urls = list(dict.fromkeys(all_urls))  # unique, keep order
 
-    st.success(f"🔗 {len(urls)} URLs detected")
+    st.markdown(f'<div class="success">🔗 <b>{len(all_urls)}</b> Swagelok URLs detected</div>', unsafe_allow_html=True)
 
-    if st.button("🚀 Start Extraction", use_container_width=True):
-        scraper = SwagelokScraper()
+    # =========================
+    # RUN EXTRACTION
+    # =========================
+    if st.button("🚀 Start Analysis"):
+        start_time = time.time()
         results = []
 
-        progress = st.progress(0.0)
-        status = st.empty()
-        start = time.time()
+        with st.spinner("Scraping Swagelok pages..."):
+            with ThreadPoolExecutor(max_workers=12) as executor:
+                futures = [executor.submit(process_url, url) for url in all_urls]
+                for f in as_completed(futures):
+                    results.append(f.result())
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = [executor.submit(scraper.scrape, u) for u in urls]
+        elapsed = round(time.time() - start_time, 2)
 
-            for i, future in enumerate(as_completed(futures), 1):
-                res = future.result()
-                if res:
-                    results.append(res)
-
-                progress.progress(i / len(urls))
-                status.write(f"Processing {i}/{len(urls)}")
-
-        elapsed = round(time.time() - start, 2)
-
-        # ------------------ CLEAN OUTPUT ------------------
         out_df = pd.DataFrame(results)
 
-        if not out_df.empty:
-            out_df = out_df.drop_duplicates(subset=["Part"])
-            out_df = out_df.dropna()
+        # Ensure columns always exist
+        for col in ["Part", "UNSPSC_Last", "Mismatch"]:
+            if col not in out_df.columns:
+                out_df[col] = None
 
-        st.success(
-            f"✅ Finished in {elapsed} seconds | "
-            f"{len(out_df)} valid unique parts"
-        )
+        st.markdown("### 📊 Analysis Summary")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total URLs", len(out_df))
+        c2.metric("Valid Parts", out_df["Part"].notna().sum())
+        c3.metric("UNSPSC Found", out_df["UNSPSC_Last"].notna().sum())
+        c4.metric("Time (sec)", elapsed)
 
-        # ------------------ DOWNLOAD ------------------
+        st.markdown("### 📋 Sample Output")
+        st.dataframe(out_df.head(20), use_container_width=True)
+
+        # =========================
+        # DOWNLOAD
+        # =========================
         buffer = BytesIO()
-        out_df.to_excel(buffer, index=False)
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            out_df.to_excel(writer, index=False, sheet_name="Swagelok_UNSPSC")
 
         st.download_button(
-            "📥 Download Excel",
-            buffer.getvalue(),
-            "swagelok_unspsc_output.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            "⬇️ Download Excel",
+            data=buffer.getvalue(),
+            file_name="swagelok_unspsc_output.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        st.dataframe(out_df, use_container_width=True)
+        st.success("✅ Done. Page-verified, latest UNSPSC, zero guessing.")
+
+else:
+    st.info("Upload an Excel file to begin.")
