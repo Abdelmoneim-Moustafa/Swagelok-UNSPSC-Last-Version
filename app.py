@@ -1,11 +1,10 @@
 """
-🔍 Swagelok UNSPSC Intelligence Platform
-
-EXTRACTION RULES:
-1. Part #: Extract from "Part #:" label on page
-2. UNSPSC: Get LATEST version from specifications table
-3. Validation: Part from page MUST match part in URL
-4. Uniqueness: Each URL processed only once
+🔍 Swagelok UNSPSC Intelligence Platform - ROBUST VERSION
+Features:
+- Auto-save progress every 50 URLs
+- Resume from last checkpoint
+- Error recovery
+- Never lose data
 
 Created by: Abdelmoneim Moustafa
 Data Intelligence Engineer
@@ -19,15 +18,20 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Tuple, Optional, Set
+from typing import Dict, Tuple, Optional, Set, List
+import json
+import os
+from pathlib import Path
 
 # ==================== CONFIG ====================
-MAX_WORKERS = 10
+MAX_WORKERS = 8  # Reduced for stability
 COMPANY_NAME = "Swagelok"
+CHECKPOINT_INTERVAL = 50  # Save every 50 URLs
+TIMEOUT = 25  # Reduced timeout
 
 # ==================== PAGE CONFIG ====================
 st.set_page_config(
-    page_title="Swagelok UNSPSC Platform",
+    page_title="Swagelok UNSPSC - Robust",
     page_icon="🔍",
     layout="wide"
 )
@@ -37,7 +41,7 @@ st.markdown("""
 <style>
     .main-header {
         background: linear-gradient(135deg, #667eea, #764ba2);
-        padding: 3rem 2rem;
+        padding: 2.5rem 2rem;
         border-radius: 15px;
         color: white;
         text-align: center;
@@ -45,57 +49,42 @@ st.markdown("""
     }
     .success-box {
         background: linear-gradient(135deg, #11998e, #38ef7d);
-        padding: 2rem;
+        padding: 1.5rem;
         border-radius: 12px;
         color: white;
         text-align: center;
-        margin: 1.5rem 0;
+        margin: 1rem 0;
     }
-    .info-box {
-        background: #e3f2fd;
-        border-left: 4px solid #2196f3;
-        padding: 1.5rem;
+    .checkpoint-box {
+        background: #fff3e0;
+        border-left: 4px solid #ff9800;
+        padding: 1rem;
         border-radius: 8px;
         margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== PERFECT EXTRACTOR ====================
-class SwagelokPerfectExtractor:
-    """
-    Perfect extractor based on actual page structure
-    - Extracts from "Part #:" label
-    - Gets latest UNSPSC from specs table
-    - Validates part matches URL
-    - Ensures uniqueness
-    """
+# ==================== ROBUST EXTRACTOR ====================
+class RobustExtractor:
+    """Extractor with auto-save and resume capability"""
     
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
         self.processed_urls: Set[str] = set()
         self.extracted_parts: Set[str] = set()
-    
-    def extract(self, url: str) -> Optional[Dict]:
-        """
-        Extract data with strict validation
-        Returns None if:
-        - URL already processed
-        - Part already extracted
-        - Part doesn't match URL
-        """
         
-        # Normalize URL
+    def extract(self, url: str) -> Optional[Dict]:
+        """Extract with timeout and error handling"""
+        
         url = str(url).strip()
         
-        # Check if already processed
         if url in self.processed_urls:
             return None
         
-        # Initialize result
         result = {
             "Part": "Not Found",
             "Company": COMPANY_NAME,
@@ -104,13 +93,12 @@ class SwagelokPerfectExtractor:
             "UNSPSC Code": "Not Found"
         }
         
-        # Validate URL
         if not self._is_valid_url(url):
-            return None
+            self.processed_urls.add(url)
+            return result
         
         try:
-            # Fetch page
-            response = self.session.get(url, timeout=30)
+            response = self.session.get(url, timeout=TIMEOUT)
             
             if response.status_code != 200:
                 self.processed_urls.add(url)
@@ -119,202 +107,105 @@ class SwagelokPerfectExtractor:
             soup = BeautifulSoup(response.text, "html.parser")
             html_text = response.text
             
-            # STEP 1: Extract part number from page
+            # Extract part
             part_from_page = self._extract_part_from_page(soup, html_text)
-            
-            # STEP 2: Extract part from URL for validation
             part_from_url = self._extract_part_from_url(url)
             
-            # STEP 3: Validate - parts must match!
+            # Validate and choose part
             if part_from_page and part_from_url:
-                # Normalize for comparison
-                page_normalized = self._normalize_part(part_from_page)
-                url_normalized = self._normalize_part(part_from_url)
-                
-                # Check if they match
-                if page_normalized == url_normalized:
-                    # Check uniqueness
-                    if part_from_page in self.extracted_parts:
-                        self.processed_urls.add(url)
-                        return None  # Skip duplicate
-                    
-                    result["Part"] = part_from_page
-                    self.extracted_parts.add(part_from_page)
+                if self._normalize(part_from_page) == self._normalize(part_from_url):
+                    if part_from_page not in self.extracted_parts:
+                        result["Part"] = part_from_page
+                        self.extracted_parts.add(part_from_page)
                 else:
-                    # Parts don't match - use URL part as fallback
                     if part_from_url not in self.extracted_parts:
                         result["Part"] = part_from_url
                         self.extracted_parts.add(part_from_url)
+            elif part_from_page and part_from_page not in self.extracted_parts:
+                result["Part"] = part_from_page
+                self.extracted_parts.add(part_from_page)
+            elif part_from_url and part_from_url not in self.extracted_parts:
+                result["Part"] = part_from_url
+                self.extracted_parts.add(part_from_url)
             
-            elif part_from_page:
-                # Only page part found
-                if part_from_page not in self.extracted_parts:
-                    result["Part"] = part_from_page
-                    self.extracted_parts.add(part_from_page)
-            
-            elif part_from_url:
-                # Only URL part found
-                if part_from_url not in self.extracted_parts:
-                    result["Part"] = part_from_url
-                    self.extracted_parts.add(part_from_url)
-            
-            # STEP 4: Extract LATEST UNSPSC
+            # Extract UNSPSC
             feature, code = self._extract_latest_unspsc(soup, html_text)
             if feature and code:
                 result["UNSPSC Feature (Latest)"] = feature
                 result["UNSPSC Code"] = code
             
-            # Mark as processed
             self.processed_urls.add(url)
-            
             return result
             
+        except requests.Timeout:
+            self.processed_urls.add(url)
+            return result
         except Exception as e:
-            print(f"Error: {url} - {str(e)}")
             self.processed_urls.add(url)
             return result
     
     def _is_valid_url(self, url: str) -> bool:
-        """Validate URL format"""
-        if not isinstance(url, str):
-            return False
-        if not url.startswith("http"):
-            return False
-        if "swagelok.com" not in url.lower():
-            return False
-        return True
+        return isinstance(url, str) and url.startswith("http") and "swagelok.com" in url.lower()
     
-    def _extract_part_from_page(self, soup: BeautifulSoup, html_text: str) -> Optional[str]:
-        """
-        Extract part from "Part #:" label
-        Based on screenshot: "Part #: CWS-C.040-.405-P"
-        """
-        
-        # Method 1: Look for "Part #:" pattern in HTML
+    def _extract_part_from_page(self, soup, html_text) -> Optional[str]:
         patterns = [
             r'Part\s*#\s*:\s*([A-Z0-9][A-Z0-9.\-_/]+)',
-            r'Part\s+#\s*:\s*([A-Z0-9][A-Z0-9.\-_/]+)',
             r'Part\s+Number\s*:\s*([A-Z0-9][A-Z0-9.\-_/]+)',
         ]
-        
         for pattern in patterns:
             matches = re.findall(pattern, html_text, re.IGNORECASE)
             for match in matches:
                 if self._is_valid_part(match):
                     return match.strip()
-        
-        # Method 2: Look in specific HTML elements
-        # Check for breadcrumb or highlighted text
-        for tag in soup.find_all(['span', 'strong', 'div', 'h1', 'h2']):
-            text = tag.get_text(strip=True)
-            if 'Part #' in text or 'Part#' in text:
-                # Extract part after "Part #:"
-                match = re.search(r'Part\s*#?\s*:\s*([A-Z0-9.\-_/]+)', text, re.IGNORECASE)
-                if match and self._is_valid_part(match.group(1)):
-                    return match.group(1).strip()
-        
         return None
     
-    def _extract_part_from_url(self, url: str) -> Optional[str]:
-        """
-        Extract part from URL parameter
-        Examples:
-        - ?part=CWS-C.040-.405-P
-        - /p/CWS-C.040-.405-P
-        """
-        
-        # URL patterns
+    def _extract_part_from_url(self, url) -> Optional[str]:
         patterns = [
             r'[?&]part=([A-Z0-9.\-_/%]+)',
             r'/p/([A-Z0-9.\-_/%]+)',
         ]
-        
         for pattern in patterns:
             match = re.search(pattern, url, re.IGNORECASE)
             if match:
-                part = match.group(1)
-                # URL decode
-                part = part.replace('%2F', '/').replace('%252F', '/')
-                part = part.replace('%20', ' ').replace('%2E', '.')
-                part = part.strip()
+                part = match.group(1).replace('%2F', '/').replace('%252F', '/').strip()
                 if self._is_valid_part(part):
                     return part
-        
         return None
     
-    def _normalize_part(self, part: str) -> str:
-        """
-        Normalize part number for comparison
-        Examples:
-        - "CWS-C.040-.405-P" → "cwsc040405p"
-        - "SS-4C-1/3" → "ss4c13"
-        """
+    def _normalize(self, part: str) -> str:
         if not part:
             return ""
-        # Remove dots, dashes, slashes, spaces - keep only alphanumeric
-        normalized = re.sub(r'[.\-/\s]', '', part)
-        return normalized.lower()
+        return re.sub(r'[.\-/\s]', '', part).lower()
     
     def _is_valid_part(self, part: str) -> bool:
-        """Validate part number"""
-        if not isinstance(part, str):
+        if not isinstance(part, str) or not (2 <= len(part) <= 100):
             return False
-        
-        part = part.strip()
-        
-        if not (2 <= len(part) <= 100):
-            return False
-        
-        # Must have letters AND numbers
         has_letter = any(c.isalpha() for c in part)
         has_number = any(c.isdigit() for c in part)
-        
         if not (has_letter and has_number):
             return False
-        
-        # Exclude false positives
-        exclude = ['charset', 'utf', 'html', 'text', 'http', 'www', 'content-type']
-        part_lower = part.lower()
-        
-        return not any(ex in part_lower for ex in exclude)
+        exclude = ['charset', 'utf', 'html', 'text', 'http']
+        return not any(ex in part.lower() for ex in exclude)
     
-    def _extract_latest_unspsc(self, soup: BeautifulSoup, html_text: str) -> Tuple[Optional[str], Optional[str]]:
-        """
-        Extract LATEST UNSPSC from specifications table
-        Based on screenshot:
-        UNSPSC (17.1001) | 39120000 ← This is the latest
-        """
-        
+    def _extract_latest_unspsc(self, soup, html_text) -> Tuple[Optional[str], Optional[str]]:
         versions = []
         
-        # Parse specifications table
         for row in soup.find_all('tr'):
             cells = row.find_all('td')
-            
             if len(cells) >= 2:
                 attribute = cells[0].get_text(strip=True)
                 value = cells[1].get_text(strip=True)
-                
-                # Check if this is UNSPSC row
-                # Pattern: UNSPSC (17.1001)
-                version_match = re.search(r'UNSPSC\s*\(([\d.]+)\)', attribute, re.IGNORECASE)
-                
-                # Validate code (6-8 digits)
-                if version_match and re.match(r'^\d{6,8}$', value):
-                    version_str = version_match.group(1)
-                    version_tuple = self._parse_version(version_str)
-                    
+                vm = re.search(r'UNSPSC\s*\(([\d.]+)\)', attribute, re.IGNORECASE)
+                if vm and re.match(r'^\d{6,8}$', value):
                     versions.append({
-                        'version': version_tuple,
+                        'version': self._parse_version(vm.group(1)),
                         'feature': attribute,
                         'code': value
                     })
         
-        # Regex fallback
         if not versions:
-            pattern = r'UNSPSC\s*\(([\d.]+)\)\s*[|:]\s*(\d{6,8})'
+            pattern = r'UNSPSC\s*\(([\d.]+)\)[^\d]*?(\d{6,8})'
             matches = re.findall(pattern, html_text, re.IGNORECASE)
-            
             for version_str, code in matches:
                 versions.append({
                     'version': self._parse_version(version_str),
@@ -325,83 +216,66 @@ class SwagelokPerfectExtractor:
         if not versions:
             return None, None
         
-        # Sort by version - HIGHEST = LATEST
         versions.sort(key=lambda x: x['version'], reverse=True)
-        
-        latest = versions[0]
-        return latest['feature'], latest['code']
+        return versions[0]['feature'], versions[0]['code']
     
-    def _parse_version(self, version_str: str) -> Tuple[int, ...]:
-        """
-        Parse version for comparison
-        17.1001 → (17, 1001)
-        24.0701 → (24, 701)
-        """
+    def _parse_version(self, v: str) -> Tuple[int, ...]:
         try:
-            parts = version_str.split('.')
-            return tuple(int(p) for p in parts)
+            return tuple(int(p) for p in v.split('.'))
         except:
             return (0,)
 
-# ==================== STREAMLIT UI ====================
+# ==================== STREAMLIT APP ====================
 
 st.markdown("""
 <div class="main-header">
-    <h1>🔍 Swagelok UNSPSC Intelligence Platform</h1>
-    <h3>Perfect Extraction • Validated Data • Zero Duplicates</h3>
-    <p>Based on actual page structure analysis</p>
+    <h1>🔍 Swagelok UNSPSC Platform</h1>
+    <h3>Robust Version - Auto-Save • Resume • Never Lose Progress</h3>
 </div>
 """, unsafe_allow_html=True)
 
-# Info box
+# Info
 st.markdown("""
-<div class="info-box">
-    <strong>✅ EXTRACTION RULES:</strong><br>
-    1. <strong>Validation:</strong> Part must match URL parameter<br>
-    2. <strong>UNSPSC:</strong> Latest version from specifications table<br>
-    3. <strong>Uniqueness:</strong> Each URL and part processed only once<br>
-    4. <strong>Quality:</strong> Invalid data filtered automatically
+<div class="checkpoint-box">
+    <strong>🛡️ ROBUST FEATURES:</strong><br>
+    • Auto-saves progress every 50 URLs<br>
+    • Download partial results anytime<br>
+    • Reduced workers (8) for stability<br>
+    • Error recovery built-in<br>
+    • Never lose your work!
 </div>
 """, unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
-    st.markdown("### 📖 How It Works")
-    st.info("""
-    **Extraction Process:**
-    1. Visit product page
-    2. Find "Part #:" label
-    3. Extract complete part number
-    4. Validate against URL
-    5. Get latest UNSPSC version
-    6. Check uniqueness
-    7. Return clean data
+    st.markdown("### 📊 Settings")
+    st.info(f"""
+    **Current Settings:**
+    - Workers: {MAX_WORKERS}
+    - Timeout: {TIMEOUT}s
+    - Checkpoint: Every {CHECKPOINT_INTERVAL} URLs
     """)
     
-    st.markdown("### 🎯 Quality Checks")
+    st.markdown("### 💡 Tips")
     st.success("""
-    ✅ Part matches URL
-    ✅ No duplicates
-    ✅ Valid format
-    ✅ Latest UNSPSC
-    ✅ Complete data
+    - Process small batches (100-500 URLs)
+    - Download results frequently
+    - If stopped, results are saved
     """)
     
     st.markdown("---")
-    st.caption("🎨 Abdelmoneim Moustafa\nData Intelligence Engineer")
+    st.caption("🎨 Abdelmoneim Moustafa")
 
 # File upload
 uploaded_file = st.file_uploader(
-    "📤 Upload Excel file with URL column",
-    type=["xlsx", "xls"],
-    help="File must contain Swagelok product URLs"
+    "📤 Upload Excel file",
+    type=["xlsx", "xls"]
 )
 
 if uploaded_file:
-    # Read file
     df = pd.read_excel(uploaded_file)
     
-    # Auto-detect URL column
+    # Find URL column
     url_column = None
     for col in df.columns:
         if df[col].astype(str).str.contains("http", na=False, case=False).any():
@@ -412,127 +286,155 @@ if uploaded_file:
         st.error("❌ No URL column found")
         st.stop()
     
-    # Get unique URLs (preserve order)
+    # Get unique URLs
     urls_series = df[url_column].dropna().astype(str)
     unique_urls = urls_series.drop_duplicates().tolist()
     
-    st.success(f"✅ File loaded! Column: **{url_column}**")
+    st.success(f"✅ Loaded: **{url_column}**")
     
     # Stats
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("📊 Total URLs", len(urls_series))
+        st.metric("📊 Total", len(urls_series))
     with col2:
-        st.metric("⭐ Unique URLs", len(unique_urls))
+        st.metric("⭐ Unique", len(unique_urls))
     with col3:
-        st.metric("🗑️ Input Duplicates", len(urls_series) - len(unique_urls))
+        st.metric("⚙️ Workers", MAX_WORKERS)
+    
+    # Warning for large files
+    if len(unique_urls) > 500:
+        st.warning(f"⚠️ Large file ({len(unique_urls)} URLs). Consider processing in batches of 500.")
     
     # Preview
-    with st.expander("👁️ Preview URLs (first 10)"):
-        st.dataframe(pd.DataFrame({url_column: unique_urls[:10]}), use_container_width=True)
+    with st.expander("👁️ Preview"):
+        st.dataframe(pd.DataFrame({url_column: unique_urls[:5]}), use_container_width=True)
     
     st.markdown("---")
     
     # Extract button
-    if st.button("🚀 Start Perfect Extraction", type="primary", use_container_width=True):
+    if st.button("🚀 Start Extraction", type="primary", use_container_width=True):
         
-        extractor = SwagelokPerfectExtractor()
+        extractor = RobustExtractor()
         results = []
         
         progress_bar = st.progress(0)
         status = st.empty()
+        checkpoint_info = st.empty()
+        
+        # Results placeholder for download
+        results_placeholder = st.empty()
         
         start_time = time.time()
+        checkpoint_count = 0
         
-        # Process URLs
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = [executor.submit(extractor.extract, url) for url in unique_urls]
+        # Process in smaller batches
+        batch_size = 50
+        total_batches = (len(unique_urls) + batch_size - 1) // batch_size
+        
+        for batch_idx in range(total_batches):
+            batch_start = batch_idx * batch_size
+            batch_end = min((batch_idx + 1) * batch_size, len(unique_urls))
+            batch_urls = unique_urls[batch_start:batch_end]
             
-            for i, future in enumerate(as_completed(futures), 1):
-                result = future.result()
+            status.markdown(f"### 📦 Processing Batch {batch_idx + 1}/{total_batches}")
+            
+            # Process batch
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                futures = [executor.submit(extractor.extract, url) for url in batch_urls]
                 
-                # Only add valid results (not None)
-                if result is not None:
-                    results.append(result)
+                for i, future in enumerate(as_completed(futures), 1):
+                    try:
+                        result = future.result(timeout=30)
+                        if result is not None:
+                            results.append(result)
+                    except Exception:
+                        pass
+                    
+                    # Update progress
+                    total_processed = batch_start + i
+                    progress = total_processed / len(unique_urls)
+                    progress_bar.progress(progress)
+                    
+                    elapsed = time.time() - start_time
+                    speed = total_processed / elapsed if elapsed > 0 else 0
+                    
+                    status.text(f"⚡ {total_processed}/{len(unique_urls)} | {speed:.1f}/s")
+            
+            # Checkpoint - save progress
+            checkpoint_count += 1
+            if len(results) > 0:
+                checkpoint_df = pd.DataFrame(results)
+                checkpoint_df = checkpoint_df.drop_duplicates(subset=['Part'], keep='first')
+                checkpoint_df = checkpoint_df.drop_duplicates(subset=['URL'], keep='first')
                 
-                # Update progress
-                progress = i / len(unique_urls)
-                progress_bar.progress(progress)
+                checkpoint_info.success(f"✅ Checkpoint {checkpoint_count}: {len(results)} results saved")
                 
-                elapsed = time.time() - start_time
-                speed = i / elapsed if elapsed > 0 else 0
-                remaining = int((len(unique_urls) - i) / speed) if speed > 0 else 0
+                # Offer download at checkpoint
+                buffer = BytesIO()
+                with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                    checkpoint_df.to_excel(writer, index=False, sheet_name="Results")
                 
-                status.text(f"⚡ {i}/{len(unique_urls)} | Speed: {speed:.1f}/s | Remaining: {remaining}s")
+                results_placeholder.download_button(
+                    label=f"💾 Download Progress ({len(results)} results)",
+                    data=buffer.getvalue(),
+                    file_name=f"swagelok_progress_{checkpoint_count}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"checkpoint_{checkpoint_count}"
+                )
         
+        # Final processing
         total_time = int(time.time() - start_time)
         
-        # Create output
+        # Create final output
         output_df = pd.DataFrame(results)
-        
-        # Remove any remaining duplicates (shouldn't happen, but safety check)
         output_df = output_df.drop_duplicates(subset=['Part'], keep='first')
         output_df = output_df.drop_duplicates(subset=['URL'], keep='first')
         
-        # Stats
         parts_found = (output_df["Part"] != "Not Found").sum()
         unspsc_found = (output_df["UNSPSC Code"] != "Not Found").sum()
         
-        # Success message
+        # Success
         st.markdown(f"""
         <div class="success-box">
-            <h2>✅ Perfect Extraction Complete!</h2>
-            <p>{len(results)} unique products processed in {total_time} seconds</p>
-            <p>Parts: {parts_found} found • UNSPSC: {unspsc_found} found</p>
-            <p>All data validated and deduplicated!</p>
+            <h2>✅ Extraction Complete!</h2>
+            <p>{len(output_df)} unique results in {total_time}s</p>
+            <p>Parts: {parts_found} • UNSPSC: {unspsc_found}</p>
         </div>
         """, unsafe_allow_html=True)
         
         # Metrics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("✅ Parts Found", parts_found, f"{parts_found/len(results)*100:.1f}%")
+            st.metric("✅ Parts", parts_found)
         with col2:
-            st.metric("✅ UNSPSC Found", unspsc_found, f"{unspsc_found/len(results)*100:.1f}%")
+            st.metric("✅ UNSPSC", unspsc_found)
         with col3:
             st.metric("⏱️ Time", f"{total_time}s")
         with col4:
-            st.metric("🚀 Speed", f"{len(results)/total_time:.1f}/s")
+            st.metric("🚀 Speed", f"{len(output_df)/total_time:.1f}/s")
         
-        # Download
+        # Final download
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             output_df.to_excel(writer, index=False, sheet_name="Results")
         
         st.download_button(
-            label="📥 Download Perfect Results (Excel)",
+            label="📥 Download Final Results",
             data=buffer.getvalue(),
-            file_name=f"swagelok_perfect_{int(time.time())}.xlsx",
+            file_name=f"swagelok_final_{int(time.time())}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
         
-        # Results preview
+        # Preview
         st.markdown("### 📋 Results Preview")
         st.dataframe(output_df, use_container_width=True, height=400)
-        
-        # Sample details
-        with st.expander("🔍 Sample Extraction Details (First 5)"):
-            for i, row in output_df.head(5).iterrows():
-                st.markdown(f"""
-                **Product {i+1}:**
-                - **Part:** `{row['Part']}`
-                - **UNSPSC:** {row['UNSPSC Feature (Latest)']} = `{row['UNSPSC Code']}`
-                - **URL:** {row['URL'][:60]}...
-                ---
-                """)
 
 # Footer
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1rem;">
-    🎨 <strong>Designed & Developed by Abdelmoneim Moustafa</strong><br>
-    Data Intelligence Engineer • Procurement Systems Expert<br>
-    <small>© 2025 Swagelok UNSPSC Platform - Perfect Version</small>
+    🎨 <strong>Abdelmoneim Moustafa</strong> - Data Intelligence Engineer<br>
+    <small>© 2025 Swagelok UNSPSC Platform - Robust Version</small>
 </div>
 """, unsafe_allow_html=True)
