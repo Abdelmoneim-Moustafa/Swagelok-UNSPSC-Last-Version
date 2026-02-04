@@ -33,7 +33,7 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 # ==================== PAGE CONFIG ====================
 st.set_page_config(
     page_title="Swagelok UNSPSC Platform - Ultimate V2",
-    page_icon="🔍",
+    page_icon="🎯",
     layout="wide"
 )
 
@@ -414,13 +414,13 @@ def process_in_background(urls, extractor):
 st.markdown("""
 <div class="main-header">
     <h1>🔍 Swagelok UNSPSC Intelligence Platform</h1>
-    <h2>Ultimate V2 • Perfect Extraction • Background Processing</h2>
+    <h2>Turn boring URLs into exciting data! Let's do this! 🎉</h2>
 </div>
 """, unsafe_allow_html=True)
 
 # Info box
 st.info("""
-**🚀 Ultimate V2 Features:**
+**🚀 Features:**
 - ✅ **PERFECT Part Detection:** Catches MS-TL-SGT, CWS-C.040-.405-P, and ALL formats
 - ✅ **Background Processing:** Continues even when you switch tabs or close browser
 - ✅ **Accurate Time Tracking:** Shows real total time and remaining time
