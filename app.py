@@ -1,6 +1,6 @@
 """
 Swagelok UNSPSC Data Extraction Tool
-Professional platform for procurement teams
+Data Intelligence Platform
 """
 
 import re
@@ -25,7 +25,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# Clean professional styling
+# Simple styling
 st.markdown("""
 <style>
     .main {
@@ -86,13 +86,7 @@ class DataExtractor:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate, br",
-            "DNT": "1",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
         
     def extract(self, url: str) -> Dict:
@@ -138,11 +132,10 @@ class DataExtractor:
     def _extract_part(self, soup, html_text, url) -> Optional[str]:
         """Extract part number using multiple methods"""
         
-        # Method 1: Direct "Part #:" label (most reliable for Swagelok)
+        # Method 1: Direct "Part #:" label
         patterns = [
             r'Part\s*#\s*:\s*([A-Z0-9][A-Z0-9.\-_/]+)',
             r'Part\s*Number\s*:\s*([A-Z0-9][A-Z0-9.\-_/]+)',
-            r'Part\s*#:\s*([A-Z0-9][A-Z0-9.\-_/]+)',
         ]
         
         for pattern in patterns:
@@ -152,17 +145,12 @@ class DataExtractor:
                 if self._is_valid_part(clean_part):
                     return clean_part
         
-        # Method 2: Breadcrumb navigation (last item often contains part number)
-        breadcrumb_selectors = [
-            'nav ol li', 
-            '.breadcrumb li', 
-            'nav[aria-label="breadcrumb"] li',
-            'ol.breadcrumb li'
-        ]
+        # Method 2: Breadcrumb navigation
+        breadcrumb_selectors = ['nav ol li', '.breadcrumb li', 'nav[aria-label="breadcrumb"] li']
         
         for selector in breadcrumb_selectors:
             elements = soup.select(selector)
-            if elements and len(elements) > 0:
+            if elements:
                 last_item = elements[-1].get_text(strip=True)
                 if self._is_valid_part(last_item):
                     return last_item
@@ -175,18 +163,17 @@ class DataExtractor:
             if part_match and self._is_valid_part(part_match.group(1)):
                 return part_match.group(1)
         
-        # Method 4: H1 and H2 heading tags
+        # Method 4: Heading tags
         for heading in soup.find_all(['h1', 'h2'], limit=5):
             text = heading.get_text(strip=True)
             part_match = re.search(r'\b([A-Z]{2,}[-\.][A-Z0-9\-\.]+)\b', text, re.IGNORECASE)
             if part_match and self._is_valid_part(part_match.group(1)):
                 return part_match.group(1)
         
-        # Method 5: URL parameter extraction
+        # Method 5: URL parameter
         url_patterns = [
             r'[?&]part=([A-Z0-9.\-_/%]+)',
             r'/p/([A-Z0-9.\-_/%]+)',
-            r'/part/([A-Z0-9.\-_/%]+)',
         ]
         
         for pattern in url_patterns:
@@ -196,27 +183,7 @@ class DataExtractor:
                 if self._is_valid_part(part):
                     return part
         
-        # Method 6: Meta tags
-        meta_tags = soup.find_all('meta', attrs={'name': re.compile(r'part|product', re.I)})
-        for meta in meta_tags:
-            content = meta.get('content', '')
-            if self._is_valid_part(content):
-                return content
-        
-        # Method 7: JSON-LD structured data
-        scripts = soup.find_all('script', type='application/ld+json')
-        for script in scripts:
-            try:
-                import json
-                data = json.loads(script.string)
-                if isinstance(data, dict):
-                    sku = data.get('sku') or data.get('productID') or data.get('mpn')
-                    if sku and self._is_valid_part(str(sku)):
-                        return str(sku)
-            except:
-                pass
-        
-        # Method 8: Pattern search in all text
+        # Method 6: Text pattern search
         all_text_matches = re.findall(r'\b([A-Z]{2,}[-\.][A-Z0-9\-\.]{2,})\b', html_text, re.IGNORECASE)
         for match in all_text_matches:
             if self._is_valid_part(match) and 4 <= len(match) <= 50:
@@ -225,60 +192,52 @@ class DataExtractor:
         return None
     
     def _is_valid_part(self, part: str) -> bool:
-        """Validate part number format for Swagelok products"""
+        """Validate part number format"""
         if not isinstance(part, str):
             return False
         
         part = part.strip()
         
-        # Length check
         if not (3 <= len(part) <= 100):
             return False
         
-        # Must contain letters or numbers
         has_letter = any(c.isalpha() for c in part)
         has_number = any(c.isdigit() for c in part)
         
         if not (has_letter or has_number):
             return False
         
-        # Must have dash or dot (typical Swagelok format)
         if not ('-' in part or '.' in part):
             return False
         
-        # Character validation
         if not re.match(r'^[A-Z0-9.\-_/]+$', part, re.IGNORECASE):
             return False
         
-        # Exclude common non-part strings
         exclude_keywords = [
-            'charset', 'utf-8', 'html', 'javascript', 'http', 'https',
-            'www.', '.com', '.net', 'email', 'phone', 'address',
-            'swagelok.com', 'product', 'catalog', 'lorem', 'ipsum'
+            'charset', 'utf-8', 'html', 'javascript', 'http', 'www.',
+            '.com', 'email', 'swagelok.com', 'product', 'catalog'
         ]
         
         part_lower = part.lower()
         if any(keyword in part_lower for keyword in exclude_keywords):
             return False
         
-        # Don't accept if it's just numbers and dashes (dates, etc.)
         if re.match(r'^[\d\-]+$', part):
             return False
         
         return True
     
     def _extract_unspsc(self, soup, html_text) -> Tuple[Optional[str], Optional[str]]:
-        """Extract UNSPSC information using multiple methods"""
+        """Extract UNSPSC information"""
         versions = []
         
-        # Method 1: Table extraction (most common in Swagelok pages)
+        # Method 1: Table extraction
         for row in soup.find_all('tr'):
             cells = row.find_all('td')
             if len(cells) >= 2:
                 attr = cells[0].get_text(strip=True)
                 val = cells[1].get_text(strip=True)
                 
-                # Look for UNSPSC with version number
                 version_match = re.search(r'UNSPSC\s*\(([\d.]+)\)', attr, re.IGNORECASE)
                 if version_match and re.match(r'^\d{6,8}$', val):
                     versions.append({
@@ -311,27 +270,6 @@ class DataExtractor:
                         'code': code_match.group(0)
                     })
         
-        # Method 4: JSON-LD structured data
-        if not versions:
-            scripts = soup.find_all('script', type='application/ld+json')
-            for script in scripts:
-                try:
-                    import json
-                    data = json.loads(script.string)
-                    if isinstance(data, dict):
-                        for key, value in data.items():
-                            if 'unspsc' in key.lower():
-                                code_match = re.search(r'\d{6,8}', str(value))
-                                if code_match:
-                                    versions.append({
-                                        'version': (99, 0),
-                                        'feature': "UNSPSC",
-                                        'code': code_match.group(0)
-                                    })
-                except:
-                    pass
-        
-        # Return the latest version
         if not versions:
             return None, None
         
@@ -339,7 +277,7 @@ class DataExtractor:
         return versions[0]['feature'], versions[0]['code']
     
     def _parse_version(self, v: str) -> Tuple[int, ...]:
-        """Parse version string to tuple for comparison"""
+        """Parse version string"""
         try:
             parts = v.split('.')
             return tuple(int(p) for p in parts)
@@ -486,7 +424,6 @@ if uploaded_file:
                             "UNSPSC Code": "Not Found"
                         })
                     
-                    # Update progress
                     progress = i / len(all_urls)
                     progress_bar.progress(progress)
                     
