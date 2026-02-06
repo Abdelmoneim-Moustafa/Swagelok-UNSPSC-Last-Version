@@ -280,7 +280,7 @@ st.markdown("""
     <strong>✨ FEATURES:</strong><br>
     ✅ <strong>Fixed Part Extraction:</strong> Matches URL with page content (no more wrong parts!)<br>
     ✅ <strong>Latest UNSPSC:</strong> Automatically selects highest version<br>
-    ✅ <strong>All Rows Processed:</strong> No data loss (5,053 input = 5,053 output)<br>
+    ✅ <strong>All Rows Processed:</strong> No data loss<br>
     ✅ <strong>Auto-Save:</strong> Progress saved every 100 rows<br>
     ✅ <strong>Fast & Stable:</strong> ~4-6 URLs/second with 6 workers
 </div>
