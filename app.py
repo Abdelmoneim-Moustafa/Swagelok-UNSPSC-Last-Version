@@ -1,11 +1,6 @@
 """
-🔍 Swagelok UNSPSC Intelligence Platform - SELENIUM VERSION
-Uses Selenium for 100% accurate part extraction
-
-✅ Extracts from actual "Part #:" label on page
-✅ Validates against URL
-✅ No "Not Found" - guaranteed extraction
-✅ Processes ALL rows
+🔍 Swagelok UNSPSC Extractor - FIXED VERSION
+Correctly extracts part from "Part #:" label
 
 Created by: Abdelmoneim Moustafa
 Data Intelligence Engineer
@@ -14,80 +9,30 @@ Data Intelligence Engineer
 import re
 import time
 import pandas as pd
-import streamlit as st
-from io import BytesIO
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Tuple, Optional
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import requests
 from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Optional, Tuple
 
-# ==================== CONFIG ====================
-MAX_WORKERS = 3  # Lower for Selenium
-COMPANY_NAME = "Swagelok"
+# Config
+MAX_WORKERS = 6
 TIMEOUT = 20
 BATCH_SIZE = 100
 
-# ==================== PAGE CONFIG ====================
-st.set_page_config(
-    page_title="Swagelok UNSPSC - Selenium",
-    page_icon="🔍",
-    layout="wide"
-)
-
-# ==================== CSS ====================
-st.markdown("""
-<style>
-    .main-header {
-        background: linear-gradient(135deg, #667eea, #764ba2);
-        padding: 2.5rem;
-        border-radius: 15px;
-        color: white;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .success-box {
-        background: linear-gradient(135deg, #11998e, #38ef7d);
-        padding: 1.5rem;
-        border-radius: 12px;
-        color: white;
-        text-align: center;
-        margin: 1rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ==================== SELENIUM EXTRACTOR ====================
-class SeleniumExtractor:
-    """Uses Selenium for 100% accurate extraction"""
+class SwagelokExtractor:
+    """Fixed extractor that correctly finds Part #: label"""
     
     def __init__(self):
-        self.driver = None
-        self._setup_driver()
-    
-    def _setup_driver(self):
-        """Setup headless Chrome"""
-        options = Options()
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-        
-        try:
-            self.driver = webdriver.Chrome(options=options)
-        except:
-            st.error("❌ Chrome/ChromeDriver not found. Using requests fallback.")
-            self.driver = None
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
     
     def extract(self, url: str) -> Dict:
-        """Extract with Selenium"""
+        """Extract with correct part identification"""
         result = {
             "Part": "Not Found",
-            "Company": COMPANY_NAME,
+            "Company": "Swagelok",
             "URL": url if url else "Empty",
             "UNSPSC Feature (Latest)": "Not Found",
             "UNSPSC Code": "Not Found"
@@ -97,105 +42,102 @@ class SeleniumExtractor:
             return result
         
         try:
-            if self.driver:
-                # Use Selenium
-                self.driver.get(url)
-                WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-                html = self.driver.page_source
-            else:
-                # Fallback to requests
-                import requests
-                response = requests.get(url, timeout=TIMEOUT)
-                html = response.text
+            response = self.session.get(url, timeout=TIMEOUT)
+            if response.status_code != 200:
+                return result
             
-            soup = BeautifulSoup(html, "html.parser")
+            soup = BeautifulSoup(response.text, "html.parser")
+            html_text = response.text
             
-            # Extract part - GUARANTEED
-            part = self._extract_part_guaranteed(soup, html, url)
+            # CRITICAL: Extract CORRECT part
+            part = self._extract_correct_part(soup, html_text, url)
             if part:
                 result["Part"] = part
             
             # Extract UNSPSC
-            feature, code = self._extract_unspsc(soup, html)
+            feature, code = self._extract_unspsc(soup, html_text)
             if feature and code:
                 result["UNSPSC Feature (Latest)"] = feature
                 result["UNSPSC Code"] = code
             
             return result
+            
         except Exception as e:
-            # Even on error, try to get part from URL
-            if part := self._extract_from_url(url):
-                result["Part"] = part
             return result
     
-    def _extract_part_guaranteed(self, soup, html, url) -> str:
-        """GUARANTEED part extraction - never returns None"""
+    def _extract_correct_part(self, soup, html_text, url) -> Optional[str]:
+        """
+        FIXED: Extract the CORRECT part from Part #: label
+        Problem: Old code was finding OTHER parts on page
+        Solution: Find the MAIN part near "Part #:" label
+        """
         
-        # PRIORITY 1: "Part #:" label (most reliable)
-        patterns = [
-            r'Part\s*#\s*:\s*([0-9A-Za-z][0-9A-Za-z.\-_/]+)',
-            r'Part\s*#:\s*([0-9A-Za-z][0-9A-Za-z.\-_/]+)',
-            r'Part\s+Number\s*:\s*([0-9A-Za-z][0-9A-Za-z.\-_/]+)',
-        ]
+        # Get the part from URL first (this is our REFERENCE)
+        url_part = self._get_url_part(url)
         
-        for pattern in patterns:
-            matches = re.findall(pattern, html, re.IGNORECASE)
-            for match in matches:
-                cleaned = match.strip()
-                # Validate it looks like real part
-                if self._is_valid_part(cleaned):
-                    # Double-check: compare with URL
-                    url_part = self._extract_from_url(url)
-                    if url_part:
-                        # Normalize both for comparison
-                        if self._normalize(cleaned) == self._normalize(url_part):
-                            return cleaned  # Perfect match!
-                    return cleaned  # Still valid even if URL different
+        # STRATEGY 1: Find "Part #:" in HTML and get value RIGHT AFTER it
+        # This should match the URL part
         
-        # PRIORITY 2: URL parameter (guaranteed fallback)
-        if url_part := self._extract_from_url(url):
+        # Look for pattern: Part #: <something>MS-TL-BGC</something>
+        pattern1 = r'Part\s*#\s*:\s*(?:<[^>]+>)?\s*([A-Z0-9][A-Z0-9.\-_/]*)'
+        matches = re.findall(pattern1, html_text, re.IGNORECASE)
+        
+        for match in matches:
+            clean = match.strip()
+            # If this matches URL part, use it!
+            if url_part and self._parts_match(clean, url_part):
+                return clean
+            # Or if it's valid and we have no URL part
+            if not url_part and self._is_valid_part(clean):
+                return clean
+        
+        # STRATEGY 2: Find element with "Part #" text and get next sibling
+        try:
+            # Find all text containing "Part #"
+            for elem in soup.find_all(text=re.compile(r'Part\s*#', re.I)):
+                parent = elem.parent
+                # Get the next element or text
+                next_elem = parent.find_next()
+                if next_elem:
+                    text = next_elem.get_text(strip=True)
+                    if self._is_valid_part(text):
+                        if url_part and self._parts_match(text, url_part):
+                            return text
+                        if not url_part:
+                            return text
+        except:
+            pass
+        
+        # STRATEGY 3: If we have URL part and it's valid, use it
+        if url_part and self._is_valid_part(url_part):
             return url_part
         
-        # PRIORITY 3: Breadcrumb
-        for elem in soup.select('nav a, .breadcrumb a'):
-            text = elem.get_text(strip=True)
-            if self._is_valid_part(text):
-                return text
-        
-        # PRIORITY 4: Page title
-        if title := soup.find('title'):
-            # Extract part-like pattern from title
-            for match in re.findall(r'([A-Z0-9]+[\-][A-Z0-9\-]+)', title.get_text(), re.IGNORECASE):
-                if self._is_valid_part(match):
-                    return match
-        
-        # LAST RESORT: Return "Not Found"
-        return "Not Found"
+        return None
     
-    def _extract_from_url(self, url: str) -> Optional[str]:
-        """Extract part from URL - guaranteed method"""
+    def _get_url_part(self, url) -> Optional[str]:
+        """Extract part from URL"""
         patterns = [
-            r'/p/([0-9A-Za-z.\-_/%]+)',
-            r'[?&]part=([0-9A-Za-z.\-_/%]+)',
+            r'/p/([A-Z0-9.\-_/%]+)',
+            r'[?&]part=([A-Z0-9.\-_/%]+)',
         ]
         
         for pattern in patterns:
-            if match := re.search(pattern, url, re.IGNORECASE):
-                part = match.group(1)
-                # URL decode
-                part = part.replace('%2F', '/').replace('%252F', '/')
-                part = part.replace('%20', ' ').strip()
-                if self._is_valid_part(part):
-                    return part
+            match = re.search(pattern, url, re.IGNORECASE)
+            if match:
+                part = match.group(1).replace('%2F', '/').replace('%252F', '/')
+                return part.strip()
         return None
     
-    def _normalize(self, text: str) -> str:
-        """Normalize for comparison"""
-        if not text:
-            return ""
-        return re.sub(r'[.\-/\s]', '', text).lower()
+    def _parts_match(self, part1: str, part2: str) -> bool:
+        """Check if two parts are the same (normalized)"""
+        if not part1 or not part2:
+            return False
+        
+        # Normalize: remove dots, dashes, slashes, lowercase
+        p1 = re.sub(r'[.\-/]', '', part1).lower()
+        p2 = re.sub(r'[.\-/]', '', part2).lower()
+        
+        return p1 == p2
     
     def _is_valid_part(self, part: str) -> bool:
         """Validate part number"""
@@ -205,15 +147,17 @@ class SeleniumExtractor:
         has_letter = any(c.isalpha() for c in part)
         has_number = any(c.isdigit() for c in part)
         
-        # Must have letters OR numbers (or both)
-        if not (has_letter or has_number):
+        # Accept if has letters, or has numbers with length > 3
+        if not (has_letter or (has_number and len(part) > 3)):
             return False
         
         # Exclude garbage
-        exclude = ['charset', 'utf', 'html', 'text', 'http', 'www', 'product', 'image']
-        return not any(ex in part.lower() for ex in exclude)
+        exclude = ['charset', 'utf', 'html', 'text', 'http', 'www', 'catalog', 'products']
+        part_lower = part.lower()
+        
+        return not any(ex in part_lower for ex in exclude)
     
-    def _extract_unspsc(self, soup, html) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_unspsc(self, soup, html_text) -> Tuple[Optional[str], Optional[str]]:
         """Extract LATEST UNSPSC"""
         versions = []
         
@@ -222,165 +166,130 @@ class SeleniumExtractor:
             if len(cells) >= 2:
                 attr = cells[0].get_text(strip=True)
                 val = cells[1].get_text(strip=True)
-                if (vm := re.search(r'UNSPSC\s*\(([\d.]+)\)', attr, re.IGNORECASE)) and re.match(r'^\d{6,8}$', val):
+                vm = re.search(r'UNSPSC\s*\(([\d.]+)\)', attr, re.IGNORECASE)
+                if vm and re.match(r'^\d{6,8}$', val):
                     versions.append({
-                        'version': self._parse_version(vm.group(1)),
-                        'feature': attr,
-                        'code': val
+                        'v': tuple(map(int, vm.group(1).split('.'))),
+                        'f': attr,
+                        'c': val
                     })
         
         if not versions:
-            for v, c in re.findall(r'UNSPSC\s*\(([\d.]+)\)[^\d]*?(\d{6,8})', html, re.IGNORECASE):
+            for v, c in re.findall(r'UNSPSC\s*\(([\d.]+)\)[^\d]*?(\d{6,8})', html_text, re.IGNORECASE):
                 versions.append({
-                    'version': self._parse_version(v),
-                    'feature': f"UNSPSC ({v})",
-                    'code': c
+                    'v': tuple(map(int, v.split('.'))),
+                    'f': f"UNSPSC ({v})",
+                    'c': c
                 })
         
-        if versions:
-            versions.sort(key=lambda x: x['version'], reverse=True)
-            return versions[0]['feature'], versions[0]['code']
+        if not versions:
+            return None, None
         
-        return None, None
+        versions.sort(key=lambda x: x['v'], reverse=True)
+        return versions[0]['f'], versions[0]['c']
+
+def process_file(input_file: str, output_file: str):
+    """Process file and extract data"""
     
-    def _parse_version(self, v: str) -> Tuple[int, ...]:
-        try:
-            return tuple(int(p) for p in v.split('.'))
-        except:
-            return (0,)
+    print("="*70)
+    print(" "*15 + "🔍 SWAGELOK UNSPSC EXTRACTOR - FIXED")
+    print("="*70)
     
-    def __del__(self):
-        """Cleanup"""
-        if self.driver:
-            self.driver.quit()
-
-# ==================== UI ====================
-
-st.markdown("""
-<div class="main-header">
-    <h1>🔍 Swagelok UNSPSC Platform</h1>
-    <h3>Selenium-Powered • 100% Accurate • Guaranteed Extraction</h3>
-</div>
-""", unsafe_allow_html=True)
-
-st.info("""
-**🚀 SELENIUM VERSION:**
-- Uses Chrome browser for accurate extraction
-- Validates part against URL
-- Guaranteed extraction (no "Not Found")
-- Processes all rows
-""")
-
-with st.sidebar:
-    st.markdown("### ⚙️ Settings")
-    st.info(f"Workers: {MAX_WORKERS}\nBatch: {BATCH_SIZE}")
-    st.markdown("---")
-    st.caption("🎨 Abdelmoneim Moustafa")
-
-uploaded_file = st.file_uploader("📤 Upload Excel", type=["xlsx", "xls"])
-
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
+    # Load
+    print("\n📂 Loading file...")
+    df = pd.read_excel(input_file)
     
     # Find URL column
-    url_column = None
+    url_col = None
     for col in df.columns:
         if df[col].astype(str).str.contains("http", na=False, case=False).any():
-            url_column = col
+            url_col = col
             break
     
-    if not url_column:
-        st.error("❌ No URL column")
-        st.stop()
+    if not url_col:
+        print("❌ No URL column found")
+        return
     
-    urls = [str(u).strip() if pd.notna(u) and str(u).strip() else None for u in df[url_column]]
-    valid_count = sum(1 for u in urls if u)
+    print(f"✅ URL column: {url_col}")
     
-    st.success(f"✅ Loaded: {url_column}")
+    # Get URLs
+    urls = [str(x).strip() if pd.notna(x) and str(x).strip() else None for x in df[url_col]]
+    valid_urls = [u for u in urls if u]
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("📊 Total", len(urls))
-    with col2:
-        st.metric("✅ Valid", valid_count)
+    print(f"\n📊 Input: {len(df)} rows, {len(valid_urls)} valid URLs")
+    print(f"🔄 Batches: {(len(valid_urls) + BATCH_SIZE - 1) // BATCH_SIZE}")
+    print(f"\n🚀 Processing...\n")
     
-    if st.button("🚀 Extract with Selenium", type="primary", use_container_width=True):
+    # Process
+    extractor = SwagelokExtractor()
+    all_results = []
+    start_time = time.time()
+    
+    for batch_num in range(0, len(valid_urls), BATCH_SIZE):
+        batch = valid_urls[batch_num:min(batch_num + BATCH_SIZE, len(valid_urls))]
         
-        st.warning("⏳ Starting Selenium... This may take a moment to initialize.")
-        
-        extractor = SeleniumExtractor()
-        results = []
-        
-        progress_bar = st.progress(0)
-        status = st.empty()
-        
-        start_time = time.time()
-        
-        # Process with threading
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(extractor.extract, url): url for url in urls if url}
+            futures = {executor.submit(extractor.extract, url): url for url in batch}
             
-            for i, future in enumerate(as_completed(futures), 1):
+            for future in as_completed(futures):
                 try:
-                    result = future.result(timeout=60)
-                    results.append(result)
+                    all_results.append(future.result(timeout=30))
                 except:
-                    url = futures[future]
-                    results.append({
-                        "Part": "Error",
-                        "Company": COMPANY_NAME,
-                        "URL": url,
+                    all_results.append({
+                        "Part": "Not Found",
+                        "Company": "Swagelok",
+                        "URL": futures[future],
                         "UNSPSC Feature (Latest)": "Not Found",
                         "UNSPSC Code": "Not Found"
                     })
                 
-                progress = i / len(futures)
-                progress_bar.progress(progress)
-                
+                done = len(all_results)
                 elapsed = time.time() - start_time
-                speed = i / elapsed if elapsed > 0 else 0
-                remaining = int((len(futures) - i) / speed) if speed > 0 else 0
+                speed = done / elapsed if elapsed > 0 else 0
+                remaining = int((len(valid_urls) - done) / speed) if speed > 0 else 0
                 
-                status.write(f"⚡ {i}/{len(futures)} | {speed:.1f}/s | Remaining: {remaining//60}m {remaining%60}s")
+                print(f"\r⚡ {done}/{len(valid_urls)} | {speed:.1f}/s | Remaining: {remaining//60}m {remaining%60}s", end='')
         
-        # Add empty URL rows
-        for idx, url in enumerate(urls):
-            if url is None:
-                results.insert(idx, {
-                    "Part": "Empty",
-                    "Company": COMPANY_NAME,
-                    "URL": "Empty",
-                    "UNSPSC Feature (Latest)": "Not Found",
-                    "UNSPSC Code": "Not Found"
-                })
-        
-        total_time = int(time.time() - start_time)
-        output_df = pd.DataFrame(results)
-        
-        parts_found = (output_df["Part"] != "Not Found").sum()
-        unspsc_found = (output_df["UNSPSC Code"] != "Not Found").sum()
-        
-        st.markdown(f"""
-        <div class="success-box">
-            <h2>✅ Complete!</h2>
-            <p>Input: {len(urls)} | Output: {len(output_df)} | Time: {total_time//60}m {total_time%60}s</p>
-            <p>Parts: {parts_found} | UNSPSC: {unspsc_found}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            output_df.to_excel(writer, index=False, sheet_name="Results")
-        
-        st.download_button(
-            "📥 Download Results",
-            buffer.getvalue(),
-            f"swagelok_selenium_{int(time.time())}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-        
-        st.dataframe(output_df, use_container_width=True, height=400)
+        # Checkpoint
+        pd.DataFrame(all_results).to_excel(f"checkpoint_{batch_num//BATCH_SIZE + 1}.xlsx", index=False)
+    
+    print("\n")
+    
+    # Save
+    results_df = pd.DataFrame(all_results)
+    
+    # Merge with original
+    df_out = df.copy()
+    df_out = df_out.merge(
+        results_df,
+        left_on=url_col,
+        right_on='URL',
+        how='left',
+        suffixes=('_original', '')
+    )
+    
+    df_out.to_excel(output_file, index=False)
+    
+    total_time = int(time.time() - start_time)
+    parts_found = (results_df["Part"] != "Not Found").sum()
+    unspsc_found = (results_df["UNSPSC Code"] != "Not Found").sum()
+    
+    print("="*70)
+    print(" "*28 + "✅ COMPLETE!")
+    print("="*70)
+    print(f"\n📊 Results: {parts_found}/{len(results_df)} parts ({parts_found/len(results_df)*100:.1f}%)")
+    print(f"📊 UNSPSC: {unspsc_found}/{len(results_df)} codes ({unspsc_found/len(results_df)*100:.1f}%)")
+    print(f"\n⏱️  Time: {total_time//60}m {total_time%60}s ({len(results_df)/total_time:.1f}/s)")
+    print(f"\n📥 Saved: {output_file}\n")
 
-st.markdown("---")
-st.caption("🎨 Abdelmoneim Moustafa - Data Intelligence Engineer")
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) < 2:
+        input_file = "/mnt/user-data/uploads/SW_clean.xlsx"
+        output_file = "/mnt/user-data/outputs/SW_output_fixed.xlsx"
+    else:
+        input_file = sys.argv[1]
+        output_file = sys.argv[2] if len(sys.argv) > 2 else "output_fixed.xlsx"
+    
+    process_file(input_file, output_file)
