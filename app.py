@@ -7,7 +7,6 @@ Features:
 - Gets latest UNSPSC version
 - Auto-saves every 100 rows
 - No data loss
-- All 5,053 rows processed
 
 Created by: Abdelmoneim Moustafa
 Data Intelligence Engineer
@@ -238,6 +237,11 @@ class SwagelokExtractor:
                 attr = cells[0].get_text(strip=True)
                 val = cells[1].get_text(strip=True)
                 
+                # CRITICAL FIX: ONLY match rows that START with "UNSPSC"
+                # This excludes eClass, which also has format "eClass (version)"
+                if not attr.upper().startswith('UNSPSC'):
+                    continue
+                
                 # Look for UNSPSC (version)
                 vm = re.search(r'UNSPSC\s*\(([\d.]+)\)', attr, re.IGNORECASE)
                 if vm and re.match(r'^\d{6,8}$', val):
@@ -286,43 +290,53 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar
 with st.sidebar:
-    st.markdown("### ⚙️ Configuration")
-    st.markdown(f"""
-    **Current Settings:**
-    - Workers: {MAX_WORKERS}
-    - Timeout: {TIMEOUT}s
-    - Batch Size: {BATCH_SIZE}
-    - Company: {COMPANY_NAME}
-    """)
-    
-    st.markdown("### 📊 How It Works")
-    st.markdown("""
-    1. Upload Excel with URLs
-    2. Auto-detect URL column
-    3. Extract parts (validated)
-    4. Get latest UNSPSC
-    5. Download results
-    """)
-    
-    st.markdown("### 🎯 Quality Checks")
-    st.success("""
-    ✅ Part matches URL
-    ✅ Latest UNSPSC selected
-    ✅ All rows unique
-    ✅ No duplicates
-    ✅ Complete data
-    """)
-    
-    st.markdown("---")
-    st.markdown("""
-    <div style="text-align: center;">
-        <strong>🎨 Created by</strong><br>
-        <strong>Abdelmoneim Moustafa</strong><br>
-        <small>Data Intelligence Engineer</small>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("## ⚙️ Configuration")
+
+    st.info(
+        f"""
+        **Current Settings**
+        - **Workers:** {MAX_WORKERS}
+        - **Timeout:** {TIMEOUT}s
+        - **Batch Size:** {BATCH_SIZE}
+        - **Company:** {COMPANY_NAME}
+        """
+    )
+
+    st.markdown("## 📊 How It Works")
+    st.markdown(
+        """
+        1. 📤 Upload Excel with URLs  
+        2. 🔍 Auto-detect URL column  
+        3. 🧩 Extract parts (validated)  
+        4. 🏷️ Fetch latest UNSPSC  
+        5. 📥 Download results  
+        """
+    )
+
+    st.markdown("## 🎯 Quality Checks")
+    st.success(
+        """
+        ✅ Part matches URL  
+        ✅ Latest UNSPSC selected  
+        ✅ All rows unique  
+        ✅ No duplicates  
+        ✅ Complete data  
+        """
+    )
+
+    st.divider()
+
+    st.markdown(
+        """
+        <div style="text-align:center; line-height:1.6;">
+            <strong>🎨 Created by</strong><br>
+            <strong>Abdelmoneim Moustafa</strong><br>
+            <small>Data Intelligence Engineer</small>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # File upload
 st.markdown("### 📤 Upload Your Excel File")
@@ -521,7 +535,7 @@ st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 2rem;">
     <p style="font-size: 1.2rem; font-weight: 600; color: #667eea;">🎨 Designed & Developed by Abdelmoneim Moustafa</p>
-    <p style="margin: 0.5rem 0;">Data Intelligence Engineer • Procurement Systems Expert</p>
+    <p style="margin: 0.5rem 0;">Data Intelligence Engineer</p>
     <p style="font-size: 0.9rem; color: #999; margin-top: 1rem;">© 2025 Swagelok UNSPSC Intelligence Platform • Production Version</p>
 </div>
 """, unsafe_allow_html=True)
