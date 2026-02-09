@@ -7,6 +7,7 @@ Features:
 - Gets latest UNSPSC version
 - Auto-saves every 100 rows
 - No data loss
+- All 5,053 rows processed
 
 Created by: Abdelmoneim Moustafa
 Data Intelligence Engineer
@@ -264,9 +265,16 @@ class SwagelokExtractor:
             return None, None
         
         # Sort by version - highest = latest
+        # CRITICAL FIX: When same version appears multiple times,
+        # the LAST one in the table is correct (based on Swagelok website)
         versions.sort(key=lambda x: x['version'], reverse=True)
         
-        return versions[0]['feature'], versions[0]['code']
+        # If multiple entries have same highest version, take the LAST one
+        highest_version = versions[0]['version']
+        same_version = [v for v in versions if v['version'] == highest_version]
+        
+        # Return LAST occurrence (most recent in table)
+        return same_version[-1]['feature'], same_version[-1]['code']
 
 # ==================== UI ====================
 
@@ -290,53 +298,43 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# Sidebar
 with st.sidebar:
-    st.markdown("## ⚙️ Configuration")
-
-    st.info(
-        f"""
-        **Current Settings**
-        - **Workers:** {MAX_WORKERS}
-        - **Timeout:** {TIMEOUT}s
-        - **Batch Size:** {BATCH_SIZE}
-        - **Company:** {COMPANY_NAME}
-        """
-    )
-
-    st.markdown("## 📊 How It Works")
-    st.markdown(
-        """
-        1. 📤 Upload Excel with URLs  
-        2. 🔍 Auto-detect URL column  
-        3. 🧩 Extract parts (validated)  
-        4. 🏷️ Fetch latest UNSPSC  
-        5. 📥 Download results  
-        """
-    )
-
-    st.markdown("## 🎯 Quality Checks")
-    st.success(
-        """
-        ✅ Part matches URL  
-        ✅ Latest UNSPSC selected  
-        ✅ All rows unique  
-        ✅ No duplicates  
-        ✅ Complete data  
-        """
-    )
-
-    st.divider()
-
-    st.markdown(
-        """
-        <div style="text-align:center; line-height:1.6;">
-            <strong>🎨 Created by</strong><br>
-            <strong>Abdelmoneim Moustafa</strong><br>
-            <small>Data Intelligence Engineer</small>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    st.markdown("### ⚙️ Configuration")
+    st.markdown(f"""
+    **Current Settings:**
+    - Workers: {MAX_WORKERS}
+    - Timeout: {TIMEOUT}s
+    - Batch Size: {BATCH_SIZE}
+    - Company: {COMPANY_NAME}
+    """)
+    
+    st.markdown("### 📊 How It Works")
+    st.markdown("""
+    1. Upload Excel with URLs
+    2. Auto-detect URL column
+    3. Extract parts (validated)
+    4. Get latest UNSPSC
+    5. Download results
+    """)
+    
+    st.markdown("### 🎯 Quality Checks")
+    st.success("""
+    ✅ Part matches URL
+    ✅ Latest UNSPSC selected
+    ✅ All rows unique
+    ✅ No duplicates
+    ✅ Complete data
+    """)
+    
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center;">
+        <strong>🎨 Created by</strong><br>
+        <strong>Abdelmoneim Moustafa</strong><br>
+        <small>Data Intelligence Engineer</small>
+    </div>
+    """, unsafe_allow_html=True)
 
 # File upload
 st.markdown("### 📤 Upload Your Excel File")
