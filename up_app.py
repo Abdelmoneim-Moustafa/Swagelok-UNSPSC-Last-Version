@@ -398,16 +398,36 @@ with st.expander("👁️ Preview (first 10 rows)"):
 
 # show completed batches if any
 completed = list_completed_batches(CHECKPOINT_DIR, CHECKPOINT_PREFIX)
+
 if completed:
-    st.info(f"Resumable run detected: {len(completed)} completed batch files found.")
-    if st.button("❌ Clear checkpoints for this file"):
-        # remove files
-        for f in glob.glob(os.path.join(CHECKPOINT_DIR, f"{CHECKPOINT_PREFIX}_*.csv")):
-            try:
-                os.remove(f)
-            except Exception:
-                pass
-        st.experimental_rerun()
+    st.info(
+        f"♻️ **Resumable run detected**\n\n"
+        f"- {len(completed)} batches already processed\n"
+        f"- You can preview saved data below\n"
+        f"- Click **Start Extraction** to resume automatically from the next batch"
+    )
+
+    with st.expander("📂 Preview saved results from previous run"):
+        partial_df = load_all_batches(CHECKPOINT_DIR, CHECKPOINT_PREFIX)
+
+        if partial_df.empty:
+            st.warning("Checkpoint files were found, but no readable data could be loaded.")
+        else:
+            st.dataframe(partial_df.head(50), use_container_width=True)
+            st.caption(
+                f"Loaded {len(partial_df)} rows from checkpoints "
+                f"({len(completed)} batches)"
+            )
+
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("❌ Clear checkpoints", help="Delete saved progress and start from scratch"):
+            for f in glob.glob(os.path.join(CHECKPOINT_DIR, f"{CHECKPOINT_PREFIX}_*.csv")):
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+            st.experimental_rerun()
 
 # =========================
 # Start extraction button
