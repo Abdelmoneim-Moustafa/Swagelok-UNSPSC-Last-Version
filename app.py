@@ -1,14 +1,11 @@
 """
 🔍 Swagelok UNSPSC Intelligence Platform - Complete Streamlit App
-Single file with all functionality
 
 Features:
 - Correctly extracts part numbers (matches URL with page)
 - Gets latest UNSPSC version (FIXED: Takes LAST occurrence)
 - Auto-saves every 100 rows
 - No data loss
-- All 5,053 rows processed
-- Dark/Light theme support
 
 Created by: Abdelmoneim Moustafa
 Data Intelligence Engineer
@@ -329,7 +326,7 @@ class SwagelokExtractor:
 st.markdown("""
 <div class="main-header">
     <h1>🔍 Swagelok UNSPSC Intelligence Platform</h1>
-    <p>Correct Part Extraction • Latest UNSPSC (LAST Occurrence) • Zero Data Loss • Production Ready</p>
+    <p>Correct Part Extraction • Latest UNSPSC • Zero Data Loss • Production Ready</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -337,45 +334,52 @@ st.markdown("""
 st.markdown("""
 <div class="info-box">
     <strong>✨ FEATURES:</strong><br>
-    ✅ <strong>Fixed Part Extraction:</strong> Matches URL with page content (no more wrong parts!)<br>
-    ✅ <strong>LAST UNSPSC:</strong> Takes bottom occurrence when duplicates exist (40183102 not 40183103)<br>
+    ✅ <strong>Fixed Part Extraction:</strong> Matches URL with page content<br>
     ✅ <strong>Latest UNSPSC:</strong> Automatically selects highest version<br>
-    ✅ <strong>All Rows Processed:</strong> No data loss (5,053 input = 5,053 output)<br>
     ✅ <strong>Auto-Save:</strong> Progress saved every 100 rows<br>
     ✅ <strong>Fast & Stable:</strong> ~4-6 URLs/second with 6 workers<br>
-    ✅ <strong>Dark/Light Theme:</strong> Perfect display in both modes
 </div>
 """, unsafe_allow_html=True)
 
+# =========================
 # Sidebar
+# =========================
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
-    st.markdown(f"""
-    **Current Settings:**
-    - Workers: {MAX_WORKERS}
-    - Timeout: {TIMEOUT}s
-    - Batch Size: {BATCH_SIZE}
-    - Company: {COMPANY_NAME}
-    """)
-    
+    st.markdown(
+        f"""
+        **Current Settings**
+        - ⚡ Workers: **{MAX_WORKERS}**
+        - ⏱️ Timeout: **{TIMEOUT}s**
+        - 🏭 Company: **{COMPANY_NAME}**
+        """
+    )
+
+    st.markdown("---")
     st.markdown("### 📊 How It Works")
-    st.markdown("""
-    1. Upload Excel with URLs
-    2. Auto-detect URL column
-    3. Extract parts (validated)
-    4. Get latest UNSPSC
-    5. Download results
-    """)
-    
+    st.markdown(
+        """
+        1. 📤 Upload Excel with product URLs  
+        2. 🔍 Auto-detect URL column  
+        3. 🧩 Extract & validate Part Number  
+        4. 🏷️ Select **latest** UNSPSC  
+        5. 📥 Download clean results  
+        """
+    )
+
+    st.markdown("---")
     st.markdown("### 🎯 Quality Checks")
-    st.success("""
-    ✅ Part matches URL
-    ✅ Latest UNSPSC selected
-    ✅ LAST occurrence used
-    ✅ All rows unique
-    ✅ No duplicates
-    ✅ Complete data
-    """)
+    st.success(
+        """
+        ✅ Part validated against URL  
+        ✅ Latest UNSPSC version selected  
+        ✅ Last occurrence logic applied  
+        ✅ Row-by-row integrity  
+        ✅ No duplicates  
+        ✅ Complete structured output  
+        """
+    )
+
     
     st.markdown("---")
     st.markdown("""
@@ -583,7 +587,7 @@ st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 2rem;">
     <p style="font-size: 1.2rem; font-weight: 600; color: #667eea;">🎨 Designed & Developed by Abdelmoneim Moustafa</p>
-    <p style="margin: 0.5rem 0;">Data Intelligence Engineer • Procurement Systems Expert</p>
+    <p style="margin: 0.5rem 0;">Data Intelligence Engineer</p>
     <p style="font-size: 0.9rem; color: #999; margin-top: 1rem;">© 2025 Swagelok UNSPSC Intelligence Platform • Production Version</p>
 </div>
 """, unsafe_allow_html=True)
