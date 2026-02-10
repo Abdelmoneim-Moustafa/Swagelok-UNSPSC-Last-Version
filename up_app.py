@@ -492,13 +492,19 @@ if start_button:
         try:
             save_batch_to_disk(batch_df, CHECKPOINT_DIR, CHECKPOINT_PREFIX, batch_idx)
             log_lines.append(f"Saved batch {batch_idx} ({len(batch_results)} rows) to disk.")
-            download_box.download_button(
-                label=f"💾 Download checkpoint (batch {batch_idx+1})",
-                data=batch_df.to_excel(index=False, engine="openpyxl"),
-                file_name=f"{FILE_ID}_batch_{batch_idx+1}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"dl_{FILE_ID}_{batch_idx}"
-            )
+            # Build an in-memory Excel file and offer it for download
+                buf = BytesIO()
+                with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                    batch_df.to_excel(writer, index=False, sheet_name=f"batch_{batch_idx+1}")
+                buf.seek(0)
+                download_box.download_button(
+                    label=f"💾 Download checkpoint (batch {batch_idx+1})",
+                    data=buf.getvalue(),
+                    file_name=f"{FILE_ID}_batch_{batch_idx+1}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_{FILE_ID}_{batch_idx}"
+                )
+
         except Exception as e:
             log_lines.append(f"Failed saving batch {batch_idx}: {safe_str(e)}")
             error_box.error(f"Failed saving batch {batch_idx}: {safe_str(e)}")
