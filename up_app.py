@@ -485,30 +485,35 @@ if start_button:
 
         # Normalize and save batch to disk immediately
         batch_df = pd.DataFrame(batch_results)
+        
         # Ensure string primitives for Arrow / CSV safety
         for col in batch_df.columns:
             batch_df[col] = batch_df[col].apply(lambda x: "" if x is None else str(x))
-
+        
         try:
+            # Save CSV checkpoint
             save_batch_to_disk(batch_df, CHECKPOINT_DIR, CHECKPOINT_PREFIX, batch_idx)
             log_lines.append(f"Saved batch {batch_idx} ({len(batch_results)} rows) to disk.")
-            # Build an in-memory Excel file and offer it for download
-                buf = BytesIO()
-                with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                    batch_df.to_excel(writer, index=False, sheet_name=f"batch_{batch_idx+1}")
-                buf.seek(0)
-                download_box.download_button(
-                    label=f"💾 Download checkpoint (batch {batch_idx+1})",
-                    data=buf.getvalue(),
-                    file_name=f"{FILE_ID}_batch_{batch_idx+1}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key=f"dl_{FILE_ID}_{batch_idx}"
-                )
-
+        
+            # Build in-memory Excel checkpoint
+            buf = BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                batch_df.to_excel(writer, index=False, sheet_name=f"batch_{batch_idx+1}")
+            buf.seek(0)
+        
+            download_box.download_button(
+                label=f"💾 Download checkpoint (batch {batch_idx+1})",
+                data=buf.getvalue(),
+                file_name=f"{FILE_ID}_batch_{batch_idx+1}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_{FILE_ID}_{batch_idx}"
+            )
+        
         except Exception as e:
-            log_lines.append(f"Failed saving batch {batch_idx}: {safe_str(e)}")
-            error_box.error(f"Failed saving batch {batch_idx}: {safe_str(e)}")
-            # continue; user can re-run and resume
+            err = safe_str(e)
+            log_lines.append(f"Failed saving batch {batch_idx}: {err}")
+            error_box.error(f"Failed saving batch {batch_idx}: {err}")
+
 
     total_time = int(time.time() - start_time)
     status_box.success(f"✅ Extraction completed. Time: {total_time//60}m {total_time%60}s")
