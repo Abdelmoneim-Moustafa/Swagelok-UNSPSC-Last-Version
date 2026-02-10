@@ -323,38 +323,44 @@ class SwagelokSeleniumExtractor:
 
 # ==================== UI ====================
 
-st.markdown("""
-<div class="main-header">
-    <h1>🔍 Swagelok UNSPSC Intelligence Platform</h1>
-    <p>💾 CRASH-PROOF • Auto-saves every row • Resume anytime</p>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div class="info-box">
-    <strong>🛡️ CRASH-PROOF FEATURES:</strong><br>
-    ✅ <strong>Auto-Save:</strong> Every row saved to disk immediately<br>
-    ✅ <strong>Resume:</strong> Continues from where you left off<br>
-    ✅ <strong>Survives:</strong> PC sleep, browser close, crashes, power loss<br>
-    ✅ <strong>100% Accurate:</strong> Selenium-based UNSPSC extraction<br>
-    ✅ <strong>LAST Occurrence:</strong> Takes bottom row when duplicates exist
-</div>
-""", unsafe_allow_html=True)
-
+# =========================
+# Sidebar
+# =========================
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
-    st.code(f"Workers: {MAX_WORKERS}\nTimeout: {TIMEOUT}s\nBatch: {BATCH_SIZE}")
-    
-    st.markdown("### 💾 Data Safety")
-    st.success("""
-    ✅ Saves every row
-    ✅ Resume anytime
-    ✅ Never lose data
-    ✅ Crash recovery
-    """)
-    
+    st.markdown(
+        f"""
+        **Current Settings**
+        - ⚡ Workers: **{MAX_WORKERS}**
+        - ⏱️ Timeout: **{TIMEOUT}s**
+        - 🏭 Company: **{COMPANY_NAME}**
+        """
+    )
+
     st.markdown("---")
-    st.markdown("**🎨 Abdelmoneim Moustafa**\n*Data Intelligence Engineer*")
+    st.markdown("### 📊 How It Works")
+    st.markdown(
+        """
+        1. 📤 Upload Excel with product URLs  
+        2. 🔍 Auto-detect URL column  
+        3. 🧩 Extract & validate Part Number  
+        4. 🏷️ Select **latest** UNSPSC  
+        5. 📥 Download clean results  
+        """
+    )
+
+    st.markdown("---")
+    st.markdown("### 🎯 Quality Checks")
+    st.success(
+        """
+        ✅ Part validated against URL  
+        ✅ Latest UNSPSC version selected  
+        ✅ Last occurrence logic applied  
+        ✅ Row-by-row integrity  
+        ✅ No duplicates  
+        ✅ Complete structured output  
+        """
+    )
 
 uploaded_file = st.file_uploader("📤 Upload Excel", type=["xlsx", "xls"])
 
@@ -405,7 +411,7 @@ if uploaded_file:
         st.markdown("---")
         
         if st.button("🚀 Start Extraction (Auto-saves every row)", type="primary"):
-            extractor = SwagelokSeleniumExtractor()
+            extractor = SwagelokExtractor()
             errors = []
             
             progress_bar = st.progress(0)
