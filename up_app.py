@@ -323,6 +323,24 @@ class SwagelokSeleniumExtractor:
 
 # ==================== UI ====================
 
+st.markdown("""
+<div class="main-header">
+    <h1>🔍 Swagelok UNSPSC Intelligence Platform</h1>
+    <p>💾 CRASH-PROOF • Latest UNSPSC • Zero Data Loss • Production Ready</p>
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="info-box">
+    <strong>🛡️ CRASH-PROOF FEATURES:</strong><br>
+    ✅ <strong>Auto-Save:</strong> Every row saved to disk immediately<br>
+    ✅ <strong>Resume:</strong> Continues from where you left off<br>
+    ✅ <strong>Survives:</strong> PC sleep, browser close, crashes, power loss<br>
+    ✅ <strong>Survives:</strong>  Row-by-Row: Processes each URL individually for better tracking<br>
+    ✅ <strong>LAST Occurrence:</strong> Row-by-Row: Fast & Stable: ~4-6 URLs/second with 6 workers
+</div>
+""", unsafe_allow_html=True)
+
 # =========================
 # Sidebar
 # =========================
@@ -361,6 +379,10 @@ with st.sidebar:
         ✅ Complete structured output  
         """
     )
+
+    
+    st.markdown("---")
+    st.markdown("**🎨 Abdelmoneim Moustafa**\n*Data Intelligence Engineer*")
 
 uploaded_file = st.file_uploader("📤 Upload Excel", type=["xlsx", "xls"])
 
@@ -411,7 +433,7 @@ if uploaded_file:
         st.markdown("---")
         
         if st.button("🚀 Start Extraction (Auto-saves every row)", type="primary"):
-            extractor = SwagelokExtractor()
+            extractor = SwagelokSeleniumExtractor()
             errors = []
             
             progress_bar = st.progress(0)
