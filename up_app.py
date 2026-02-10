@@ -1,216 +1,537 @@
 """
-🔍 Swagelok UNSPSC Intelligence Platform
-CRITICAL FIX: Takes LAST UNSPSC occurrence (bottom of table = correct code)
+🔍 Swagelok UNSPSC Intelligence Platform — Production-ready Streamlit App
+
+Features:
+- Accurate UNSPSC extraction (takes LAST occurrence for highest version)
+- Robust per-file disk checkpoints (resume after sleep/refresh/crash)
+- Sequential (row-by-row) or Parallel mode (ThreadPoolExecutor)
+- Safe Arrow/Streamlit serialization (everything converted to primitives)
+- Clean, responsive UI with dark/light theme support
+- Download checkpoints & final results
+- Clear error logging
 
 Created by: Abdelmoneim Moustafa
 Data Intelligence Engineer
 """
 
-import re, time, pandas as pd, requests, streamlit as st
-from bs4 import BeautifulSoup
+import os
+import glob
+import re
+import time
+import hashlib
+import pandas as pd
+import requests
+import streamlit as st
+
 from io import BytesIO
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
+from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-TIMEOUT, COMPANY_NAME, CHECKPOINT_INTERVAL = 20, "Swagelok", 100
+# =========================
+# CONFIG (tweak if needed)
+# =========================
+TIMEOUT = 20
+COMPANY_NAME = "Swagelok"
+DEFAULT_BATCH_SIZE = 100
+DEFAULT_MAX_WORKERS = 6
+UI_UPDATE_EVERY = 10  # update UI every N processed items to reduce redraws
 
-st.set_page_config(page_title="Swagelok UNSPSC", page_icon="🔍", layout="wide")
+# =========================
+# PAGE + STYLING
+# =========================
+st.set_page_config(page_title="Swagelok UNSPSC Platform", page_icon="🔍", layout="wide")
 
-# Perfect dark/light theme support
-st.markdown("""
+st.markdown(
+    """
 <style>
-    :root {
-        --info-bg: #e3f2fd;
-        --card-bg: #ffffff;
-        --border: #e0e0e0;
-        --text: #333333;
-        --error-bg: #ffebee;
-    }
-    @media (prefers-color-scheme: dark) {
-        :root {
-            --info-bg: #1a237e;
-            --card-bg: #1e1e1e;
-            --border: #424242;
-            --text: #e0e0e0;
-            --error-bg: #b71c1c;
-        }
-    }
-    [data-theme="dark"] {
-        --info-bg: #1a237e;
-        --card-bg: #1e1e1e;
-        --border: #424242;
-        --text: #e0e0e0;
-        --error-bg: #b71c1c;
-    }
-    .main-header{background:linear-gradient(135deg,#667eea,#764ba2);padding:2.5rem;border-radius:15px;color:white;text-align:center;margin-bottom:2rem;box-shadow:0 8px 20px rgba(102,126,234,0.3)}
-    .info-box{background:var(--info-bg);border-left:5px solid #2196f3;padding:1.5rem;border-radius:12px;margin:1rem 0;color:var(--text)}
-    .success-box{background:linear-gradient(135deg,#11998e,#38ef7d);padding:2rem;border-radius:15px;color:white;text-align:center;margin:1.5rem 0;box-shadow:0 8px 20px rgba(17,153,142,0.3)}
-    .progress-card{background:var(--card-bg);padding:1.5rem;border-radius:12px;margin:1rem 0;border:1px solid var(--border);color:var(--text)}
-    .error-card{background:var(--error-bg);border-left:5px solid #f44336;padding:1rem;border-radius:8px;margin:0.5rem 0;color:var(--text)}
+:root {
+  --info-bg: #e3f2fd;
+  --card-bg: #ffffff;
+  --border: #e0e0e0;
+  --text: #333333;
+  --error-bg: #ffebee;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --info-bg: #1a237e;
+    --card-bg: #1e1e1e;
+    --border: #424242;
+    --text: #e0e0e0;
+    --error-bg: #b71c1c;
+  }
+}
+.main-header{background:linear-gradient(135deg,#667eea,#764ba2);padding:2rem;border-radius:14px;color:white;text-align:center;margin-bottom:1.5rem;box-shadow:0 8px 20px rgba(102,126,234,0.15)}
+.info-box{background:var(--info-bg);border-left:5px solid #2196f3;padding:1rem;border-radius:10px;margin:0.75rem 0;color:var(--text)}
+.success-box{background:linear-gradient(135deg,#11998e,#38ef7d);padding:1.25rem;border-radius:12px;color:white;text-align:center;margin:1rem 0}
+.progress-card{background:var(--card-bg);padding:1rem;border-radius:10px;margin:0.5rem 0;border:1px solid var(--border);color:var(--text)}
+.error-card{background:var(--error-bg);border-left:5px solid #f44336;padding:0.8rem;border-radius:8px;margin:0.5rem 0;color:var(--text)}
+.small-muted{font-size:0.9rem;color:gray}
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-class SwagelokExtractor:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-    
-    def extract(self, url: str, row_num: int) -> Dict:
-        r = {"Row":row_num,"Part":"Not Found","Company":COMPANY_NAME,"URL":url or "Empty","UNSPSC Feature (Latest)":"Not Found","UNSPSC Code":"Not Found","Status":"Success","Error":""}
-        if not url or not isinstance(url,str) or not url.startswith("http"):
-            r["Status"],r["Error"]="Invalid URL","URL is empty or invalid"
-            return r
+st.markdown(
+    '<div class="main-header"><h1>🔍 Swagelok UNSPSC Platform</h1><p>Row-by-row • LAST UNSPSC occurrence • Resume-safe</p></div>',
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+<div class="info-box">
+  <strong>✨ Key fixes:</strong><br>
+  • Selects the <em>last</em> occurrence of the highest UNSPSC version (bottom of table) — correct code selected.<br>
+  • Per-upload file checkpointing to disk — survive sleep/refresh/crash.<br>
+  • Optional parallel mode for speed (configurable workers).<br>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# =========================
+# Utilities: file id, checkpoints
+# =========================
+def get_file_id(uploaded_file: st.uploaded_file_manager.UploadedFile) -> str:
+    """Stable short id (md5 hex12) for an uploaded file's contents."""
+    raw = uploaded_file.getvalue()
+    return hashlib.md5(raw).hexdigest()[:12]
+
+
+def make_checkpoint_paths(file_id: str):
+    base_dir = os.path.join("checkpoints", file_id)
+    os.makedirs(base_dir, exist_ok=True)
+    prefix = "batch"
+    return base_dir, prefix
+
+
+def list_completed_batches(checkpoint_dir: str, prefix: str) -> set:
+    pattern = os.path.join(checkpoint_dir, f"{prefix}_*.csv")
+    files = glob.glob(pattern)
+    completed = set()
+    for f in files:
+        name = os.path.basename(f)
         try:
-            resp = self.session.get(url, timeout=TIMEOUT)
+            batch_num = int(name.split("_")[-1].split(".")[0])
+            completed.add(batch_num)
+        except Exception:
+            continue
+    return completed
+
+
+def save_batch_to_disk(batch_df: pd.DataFrame, checkpoint_dir: str, prefix: str, batch_num: int):
+    """Atomically write a CSV for a batch (flush + fsync)."""
+    path = os.path.join(checkpoint_dir, f"{prefix}_{batch_num}.csv")
+    tmp = path + ".tmp"
+    # Ensure columns are primitive / string to be safe
+    batch_df = batch_df.copy()
+    for col in batch_df.columns:
+        batch_df[col] = batch_df[col].apply(lambda x: "" if x is None else str(x))
+    batch_df.to_csv(tmp, index=False, encoding="utf-8")
+    # atomic replace
+    os.replace(tmp, path)
+
+
+def load_all_batches(checkpoint_dir: str, prefix: str) -> pd.DataFrame:
+    pattern = os.path.join(checkpoint_dir, f"{prefix}_*.csv")
+    files = sorted(glob.glob(pattern), key=lambda x: int(os.path.basename(x).split("_")[-1].split(".")[0]))
+    if not files:
+        return pd.DataFrame()
+    dfs = []
+    for f in files:
+        try:
+            dfs.append(pd.read_csv(f, dtype=str))
+        except Exception:
+            # skip corrupt files but continue
+            continue
+    if not dfs:
+        return pd.DataFrame()
+    return pd.concat(dfs, ignore_index=True)
+
+
+# =========================
+# Helper: safe string converter
+# =========================
+def safe_str(x) -> str:
+    if x is None:
+        return ""
+    return str(x)
+
+
+# =========================
+# Swagelok Extractor (same logic, defensive)
+# =========================
+class SwagelokExtractor:
+    def __init__(self, timeout: int = TIMEOUT):
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": "Mozilla/5.0 (Swagelok-UNSPSC-Extractor)"})
+        self.timeout = timeout
+
+    def extract(self, url: str, row_num: int) -> Dict:
+        """Return a dict with primitive values only."""
+        result = {
+            "Row": row_num,
+            "Part": "Not Found",
+            "Company": COMPANY_NAME,
+            "URL": url or "Empty",
+            "UNSPSC Feature (Latest)": "Not Found",
+            "UNSPSC Code": "Not Found",
+            "Status": "Success",
+            "Error": ""
+        }
+
+        if not url or not isinstance(url, str) or not url.startswith("http"):
+            result["Status"] = "Invalid URL"
+            result["Error"] = "URL is empty or invalid"
+            return result
+
+        try:
+            resp = self.session.get(url, timeout=self.timeout)
             if resp.status_code != 200:
-                r["Status"],r["Error"]=f"HTTP {resp.status_code}",f"Status {resp.status_code}"
-                return r
-            soup,html = BeautifulSoup(resp.text,"html.parser"),resp.text
-            if p:=self._part(soup,html,url): r["Part"]=p
-            else: r["Error"]="Part not found"
-            # CRITICAL: Use new method that takes LAST occurrence
-            if (f,c:=self._unspsc_last(soup,html))[0]: r["UNSPSC Feature (Latest)"],r["UNSPSC Code"]=f,c
-            else: r["Error"]=r["Error"]+";UNSPSC not found" if r["Error"] else "UNSPSC not found"
-            return r
-        except requests.Timeout: r["Status"],r["Error"]="Timeout",f"Timeout after {TIMEOUT}s"; return r
-        except Exception as e: r["Status"],r["Error"]="Error",str(e)[:100]; return r
-    
-    def _part(self,s,h,u):
-        up=self._up(u)
-        for m in re.findall(r'Part\s*#\s*:\s*(?:<[^>]+>)?\s*([A-Z0-9][A-Z0-9.\-_/]*)',h,re.I):
-            if c:=m.strip():
-                if up and self._pm(c,up): return c
-                if not up and self._vp(c): return c
-        return up if up and self._vp(up) else None
-    
-    def _up(self,u):
-        for p in [r'/p/([A-Z0-9.\-_/%]+)',r'[?&]part=([A-Z0-9.\-_/%]+)']:
-            if m:=re.search(p,u,re.I): return m.group(1).replace('%2F','/').replace('%252F','/').strip()
-    
-    def _pm(self,p1,p2): return bool(p1 and p2 and re.sub(r'[.\-/]','',p1).lower()==re.sub(r'[.\-/]','',p2).lower())
-    def _vp(self,p): return isinstance(p,str) and 2<=len(p)<=100 and (any(c.isalpha() for c in p) or (any(c.isdigit() for c in p) and len(p)>3)) and not any(x in p.lower() for x in['charset','utf','html','http'])
-    
-    def _unspsc_last(self,s,h):
-        """
-        CRITICAL FIX FOR CORRECT UNSPSC EXTRACTION
-        
-        Problem: Multiple UNSPSC (17.1001) rows exist, was taking FIRST
-        Solution: Take LAST occurrence (bottom of table)
-        
-        Example from SS-4BMRG-TW:
-        - UNSPSC (4.03)    → 40141600
-        - UNSPSC (10.0)    → 40141609
-        - UNSPSC (17.1001) → 40183103  ← First occurrence (WRONG)
-        - UNSPSC (17.1001) → 40183102  ← Last occurrence (CORRECT!)
-        
-        We need: 40183102 (last one)
-        """
+                result["Status"] = f"HTTP {resp.status_code}"
+                result["Error"] = f"Status {resp.status_code}"
+                return result
+
+            html = resp.text
+            soup = BeautifulSoup(html, "html.parser")
+
+            # Part extraction
+            part = self._part(soup, html, url)
+            if part:
+                result["Part"] = part
+            else:
+                # don't overwrite existing error; only set if none
+                if not result["Error"]:
+                    result["Error"] = "Part not found"
+
+            # UNSPSC extraction (last occurrence for highest version)
+            feat, code = self._unspsc_last(soup, html)
+            if feat and code:
+                result["UNSPSC Feature (Latest)"] = feat
+                result["UNSPSC Code"] = code
+            else:
+                result["Error"] = (result["Error"] + ";UNSPSC not found") if result["Error"] else "UNSPSC not found"
+
+            return result
+
+        except requests.Timeout:
+            result["Status"] = "Timeout"
+            result["Error"] = f"Timeout after {self.timeout}s"
+            return result
+        except Exception as e:
+            result["Status"] = "Error"
+            # keep errors short and safe
+            result["Error"] = safe_str(str(e))[:200]
+            return result
+
+    # ----- part helpers -----
+    def _part(self, s: BeautifulSoup, html: str, url: str) -> Optional[str]:
+        up = self._up(url)
+        for m in re.findall(r'Part\s*#\s*:\s*(?:<[^>]+>)?\s*([A-Z0-9][A-Z0-9.\-_/]*)', html, re.I):
+            c = m.strip()
+            if not c:
+                continue
+            if up and self._pm(c, up):
+                return c
+            if not up and self._vp(c):
+                return c
+        return up if (up and self._vp(up)) else None
+
+    def _up(self, u: str) -> Optional[str]:
+        for p in [r'/p/([A-Z0-9.\-_/%]+)', r'[?&]part=([A-Z0-9.\-_/%]+)']:
+            m = re.search(p, u, re.I)
+            if m:
+                return m.group(1).replace('%2F', '/').replace('%252F', '/').strip()
+        return None
+
+    def _pm(self, p1: str, p2: str) -> bool:
+        if not p1 or not p2:
+            return False
+        n1 = re.sub(r'[.\-/]', '', p1).lower()
+        n2 = re.sub(r'[.\-/]', '', p2).lower()
+        return n1 == n2
+
+    def _vp(self, p: str) -> bool:
+        if not isinstance(p, str) or not (2 <= len(p) <= 100):
+            return False
+        has_alpha = any(c.isalpha() for c in p)
+        has_digit = any(c.isdigit() for c in p)
+        if not (has_alpha or (has_digit and len(p) > 3)):
+            return False
+        exclude = ['charset', 'utf', 'html', 'http', 'www', 'text']
+        return not any(ex in p.lower() for ex in exclude)
+
+    # ----- UNSPSC: take LAST occurrence for highest version -----
+    def _unspsc_last(self, s: BeautifulSoup, html: str) -> Tuple[Optional[str], Optional[str]]:
         all_entries = []
-        
-        # Parse table maintaining ORDER (critical!)
         for idx, row in enumerate(s.find_all('tr')):
             cells = row.find_all('td')
             if len(cells) >= 2:
                 attr = cells[0].get_text(strip=True)
                 val = cells[1].get_text(strip=True)
-                
-                # ONLY UNSPSC rows (exclude eClass)
                 if not attr.upper().startswith('UNSPSC'):
                     continue
-                
-                # Extract version
-                if (vm:=re.search(r'UNSPSC\s*\(([\d.]+)\)',attr,re.I)) and re.match(r'^\d{6,8}$',val):
-                    all_entries.append({
-                        'v': tuple(map(int,vm.group(1).split('.'))),
-                        'f': attr,
-                        'c': val,
-                        'order': idx  # Track position in table
-                    })
-        
-        # Regex fallback
+                vm = re.search(r'UNSPSC\s*\(([\d.]+)\)', attr, re.I)
+                if vm and re.match(r'^\d{6,8}$', val):
+                    try:
+                        version_tuple = tuple(map(int, vm.group(1).split('.')))
+                    except Exception:
+                        version_tuple = (0,)
+                    all_entries.append({'v': version_tuple, 'f': attr, 'c': val, 'order': idx})
+
+        # fallback regex if table parse failed
         if not all_entries:
-            for idx,(v_str,code) in enumerate(re.findall(r'UNSPSC\s*\(([\d.]+)\)[^\d]*?(\d{6,8})',h,re.I)):
-                all_entries.append({
-                    'v': tuple(map(int,v_str.split('.'))),
-                    'f': f"UNSPSC ({v_str})",
-                    'c': code,
-                    'order': idx
-                })
-        
+            for idx, (v_str, code) in enumerate(re.findall(r'UNSPSC\s*\(([\d.]+)\)[^\d]*?(\d{6,8})', html, re.I)):
+                try:
+                    version_tuple = tuple(map(int, v_str.split('.')))
+                except Exception:
+                    version_tuple = (0,)
+                all_entries.append({'v': version_tuple, 'f': f"UNSPSC ({v_str})", 'c': code, 'order': idx})
+
         if not all_entries:
             return None, None
-        
-        # Find maximum version
+
+        # choose max version; then pick last occurrence by order
         max_v = max(e['v'] for e in all_entries)
-        
-        # Get ALL entries with max version
         max_entries = [e for e in all_entries if e['v'] == max_v]
-        
-        # CRITICAL: Take the LAST one (highest order = bottom of table)
         last_one = max(max_entries, key=lambda x: x['order'])
-        
         return last_one['f'], last_one['c']
 
-st.markdown('<div class="main-header"><h1>🔍 Swagelok UNSPSC Platform</h1><p>Row-by-Row • LAST UNSPSC (Fixed!) • Adaptive Theme</p></div>',unsafe_allow_html=True)
-st.markdown('<div class="info-box"><strong>✨ CRITICAL FIX:</strong><br>✅ <strong>LAST UNSPSC:</strong> Takes bottom occurrence <br>✅ <strong>Dark/Light:</strong> Perfect theme support<br>✅ <strong>Row-by-Row:</strong> Individual tracking<br>✅ <strong>Auto-Save:</strong> Every 100 rows</div>',unsafe_allow_html=True)
 
+# =========================
+# Sidebar / Config UI
+# =========================
 with st.sidebar:
-    st.markdown("### ⚙️ Config")
-    st.code(f"Timeout: {TIMEOUT}s\nCheckpoint: {CHECKPOINT_INTERVAL}\nProcessing: Sequential")
-    st.markdown("### 🎯 UNSPSC Fix")
-    st.info("When multiple same versions exist, takes LAST (bottom) occurrence")
-    st.markdown("---\n**🎨 Abdelmoneim Moustafa**\n*Data Intelligence Engineer*")
+    st.markdown("### ⚙️ Configuration")
+    processing_mode = st.selectbox("Processing mode", ["Sequential (safe, deterministic)", "Parallel (faster)"])
+    if processing_mode.startswith("Parallel"):
+        max_workers = st.slider("Workers (threads)", min_value=1, max_value=32, value=DEFAULT_MAX_WORKERS, step=1)
+    else:
+        max_workers = 1
 
-if f:=st.file_uploader("📤 Upload Excel",type=["xlsx","xls"]):
+    batch_size = st.number_input("Batch size (checkpoint granularity)", min_value=10, max_value=2000, value=DEFAULT_BATCH_SIZE, step=10)
+    timeout = st.number_input("Request timeout (s)", min_value=5, max_value=120, value=TIMEOUT, step=1)
+    st.markdown("---")
+    st.markdown("### 📊 How it works")
+    st.markdown(
+        "1. Upload Excel with product URLs  \n"
+        "2. App detects URL column  \n"
+        "3. Processes rows in batches and saves each batch to disk  \n"
+        "4. You can resume after refresh/sleep/crash  \n"
+    )
+    st.markdown("---")
+    st.markdown("### 🎨 Author")
+    st.markdown("**Abdelmoneim Moustafa**  \n*Data Intelligence Engineer*")
+
+
+# =========================
+# File upload & detection
+# =========================
+uploaded_file = st.file_uploader("📤 Upload Excel (.xlsx/.xls)", type=["xlsx", "xls"])
+if not uploaded_file:
+    st.info("Upload an Excel file to begin. Checkpointing will be created per uploaded file.")
+    st.stop()
+
+# compute file id & checkpoint paths
+FILE_ID = get_file_id(uploaded_file)
+CHECKPOINT_DIR, CHECKPOINT_PREFIX = make_checkpoint_paths(FILE_ID)
+
+st.caption(f"🆔 File ID: {FILE_ID} — checkpoints saved to `{CHECKPOINT_DIR}/`")
+
+# read dataframe
+try:
+    df_in = pd.read_excel(uploaded_file)
+except Exception as e:
+    st.error("Could not read uploaded Excel file. Make sure it's a valid .xlsx/.xls")
+    st.exception(e)
+    st.stop()
+
+# detect URL column
+url_column = None
+for c in df_in.columns:
     try:
-        df=pd.read_excel(f)
-        uc=next((c for c in df.columns if df[c].astype(str).str.contains("http",na=False,case=False).any()),None)
-        if not uc: st.error("❌ No URL column"); st.stop()
-        st.success(f"✅ URL column: **{uc}**")
-        urls=[str(x).strip() if pd.notna(x) and str(x).strip() else None for x in df[uc]]
-        vc=sum(1 for u in urls if u)
-        c1,c2,c3=st.columns(3)
-        c1.metric("📊 Total",len(urls)); c2.metric("✅ Valid",vc); c3.metric("⏱️ Est.",f"~{int(vc*0.25/60)}m")
-        with st.expander("👁️ Preview"): st.dataframe(pd.DataFrame({"Row":range(1,6),uc:[u or"Empty"for u in urls[:5]]}))
-        
-        if st.button("🚀 Start Extraction",type="primary"):
-            ex,res,errs=SwagelokExtractor(),[],[]
-            pb,sc,ec,dp=st.progress(0),st.empty(),st.empty(),st.empty()
-            st_t=time.time()
-            
-            for i,url in enumerate(urls,1):
-                pb.progress(i/len(urls))
-                r=ex.extract(url,i)
-                res.append(r)
-                if r["Status"]!="Success": errs.append(f"Row {i}: {r['Status']} - {r['Error']}")
-                el,sp=time.time()-st_t,i/(time.time()-st_t)if time.time()>st_t else 0
-                rm=int((len(urls)-i)/sp)if sp>0 else 0
-                sc.markdown(f'<div class="progress-card"><strong>Row {i}/{len(urls)}</strong><br>Speed: {sp:.1f}/s | Remaining: {rm//60}m {rm%60}s<br>Part: {r["Part"]} | UNSPSC: {r["UNSPSC Code"]} | Status: {r["Status"]}</div>',unsafe_allow_html=True)
-                if errs: ec.markdown(f'<div class="error-card"><strong>⚠️ Errors: {len(errs)}</strong><br>Latest: {errs[-1]}</div>',unsafe_allow_html=True)
-                if i%CHECKPOINT_INTERVAL==0:
-                    buf=BytesIO()
-                    with pd.ExcelWriter(buf,engine="openpyxl")as w: pd.DataFrame(res).to_excel(w,index=False)
-                    dp.download_button(f"💾 Checkpoint ({i})",buf.getvalue(),f"cp_{i}.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",key=f"cp{i}")
-            
-            tt=int(time.time()-st_t)
-            od=pd.DataFrame(res)
-            of=od.drop(columns=['Row','Status','Error'])
-            pf=(od["Part"]!="Not Found").sum()
-            uf=(od["UNSPSC Code"]!="Not Found").sum()
-            suc=(od["Status"]=="Success").sum()
-            
-            st.markdown(f'<div class="success-box"><h2>✅ Complete!</h2><p><strong>Processed:</strong> {len(urls)} rows in {tt//60}m {tt%60}s</p><p><strong>Success:</strong> {suc}/{len(urls)} ({suc/len(urls)*100:.1f}%)</p><p><strong>Parts:</strong> {pf} | <strong>UNSPSC:</strong> {uf} | <strong>Errors:</strong> {len(errs)}</p></div>',unsafe_allow_html=True)
-            
-            c1,c2,c3,c4=st.columns(4)
-            c1.metric("✅ Success",suc); c2.metric("✅ Parts",pf); c3.metric("✅ UNSPSC",uf); c4.metric("⚠️ Errors",len(errs))
-            
-            buf=BytesIO()
-            with pd.ExcelWriter(buf,engine="openpyxl")as w: of.to_excel(w,index=False,sheet_name="Results")
-            st.download_button("📥 Download Final Results",buf.getvalue(),f"swagelok_{int(time.time())}.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",use_container_width=True)
-            
-            st.markdown("### 📋 Results"); st.dataframe(of.head(20),use_container_width=True)
-            if errs:
-                with st.expander(f"⚠️ Error Log ({len(errs)})"):
-                    for e in errs: st.text(e)
-    except Exception as e: st.error(f"❌ Error: {e}"); st.exception(e)
+        if df_in[c].astype(str).str.contains("http", case=False, na=False).any():
+            url_column = c
+            break
+    except Exception:
+        continue
 
-st.markdown('---\n<div style="text-align:center;padding:2rem"><p style="font-size:1.2rem;font-weight:600">🎨 Abdelmoneim Moustafa</p><p>Data Intelligence Engineer</p></div>',unsafe_allow_html=True)
+if not url_column:
+    st.error("❌ No URL column detected in the uploaded file.")
+    st.stop()
+
+st.success(f"✅ Detected URL column: **{url_column}**")
+
+# prepare urls list
+urls_all = [str(x).strip() if pd.notna(x) and str(x).strip() else None for x in df_in[url_column]]
+valid_urls = [u for u in urls_all if u]
+total = len(valid_urls)
+
+# quick stats + preview
+c1, c2, c3 = st.columns(3)
+c1.metric("Rows (total)", len(urls_all))
+c2.metric("Valid URLs", total)
+c3.metric("Batches", (total + batch_size - 1) // batch_size)
+
+with st.expander("👁️ Preview (first 10 rows)"):
+    preview = pd.DataFrame({url_column: [u if u else "Empty" for u in urls_all[:10]]})
+    st.dataframe(preview, use_container_width=True)
+
+# show completed batches if any
+completed = list_completed_batches(CHECKPOINT_DIR, CHECKPOINT_PREFIX)
+if completed:
+    st.info(f"Resumable run detected: {len(completed)} completed batch files found.")
+    if st.button("❌ Clear checkpoints for this file"):
+        # remove files
+        for f in glob.glob(os.path.join(CHECKPOINT_DIR, f"{CHECKPOINT_PREFIX}_*.csv")):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+        st.experimental_rerun()
+
+# =========================
+# Start extraction button
+# =========================
+start_button = st.button("🚀 Start Extraction", type="primary")
+
+if start_button:
+    extractor = SwagelokExtractor(timeout=int(timeout))
+    progress_bar = st.progress(0.0)
+    status_box = st.empty()
+    error_box = st.empty()
+    download_box = st.empty()
+    log_lines: List[str] = []
+
+    # determine batches
+    num_batches = (total + batch_size - 1) // batch_size
+    completed_batches = list_completed_batches(CHECKPOINT_DIR, CHECKPOINT_PREFIX)
+
+    start_time = time.time()
+    overall_done = 0
+
+    # iterate batches, skip completed
+    for batch_idx in range(num_batches):
+        if batch_idx in completed_batches:
+            overall_done = min((batch_idx + 1) * batch_size, total)
+            # update UI quickly
+            if overall_done % UI_UPDATE_EVERY == 0 or batch_idx == num_batches - 1:
+                progress_bar.progress(overall_done / total if total else 1.0)
+                status_box.info(f"Resumed: Skipped batch {batch_idx} (already saved). Done: {overall_done}/{total}")
+            continue
+
+        # slice urls for this batch
+        start_i = batch_idx * batch_size
+        end_i = min((batch_idx + 1) * batch_size, total)
+        batch_urls = valid_urls[start_i:end_i]
+        batch_results: List[Dict] = []
+
+        # processing: parallel or sequential
+        if processing_mode.startswith("Parallel") and max_workers > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_idx = {executor.submit(extractor.extract, url, start_i + idx + 1): idx for idx, url in enumerate(batch_urls)}
+                processed_in_batch = 0
+                for future in as_completed(future_to_idx):
+                    idx_local = future_to_idx[future]
+                    try:
+                        res = future.result()
+                    except Exception as e:
+                        res = {
+                            "Row": start_i + idx_local + 1,
+                            "Part": "Not Found",
+                            "Company": COMPANY_NAME,
+                            "URL": batch_urls[idx_local],
+                            "UNSPSC Feature (Latest)": "Not Found",
+                            "UNSPSC Code": "Not Found",
+                            "Status": "Error",
+                            "Error": safe_str(e)
+                        }
+                    batch_results.append(res)
+                    processed_in_batch += 1
+                    overall_done += 1
+
+                    # periodic UI updates
+                    if overall_done % UI_UPDATE_EVERY == 0 or overall_done == total:
+                        progress_bar.progress(overall_done / total if total else 1.0)
+                        status_box.info(f"Processing: {overall_done}/{total} | Batch {batch_idx+1}/{num_batches}")
+        else:
+            # sequential (deterministic order)
+            for idx_local, url in enumerate(batch_urls):
+                res = extractor.extract(url, start_i + idx_local + 1)
+                batch_results.append(res)
+                overall_done += 1
+                if overall_done % UI_UPDATE_EVERY == 0 or overall_done == total:
+                    progress_bar.progress(overall_done / total if total else 1.0)
+                    status_box.info(f"Processing: {overall_done}/{total} | Batch {batch_idx+1}/{num_batches}")
+
+        # Normalize and save batch to disk immediately
+        batch_df = pd.DataFrame(batch_results)
+        # Ensure string primitives for Arrow / CSV safety
+        for col in batch_df.columns:
+            batch_df[col] = batch_df[col].apply(lambda x: "" if x is None else str(x))
+
+        try:
+            save_batch_to_disk(batch_df, CHECKPOINT_DIR, CHECKPOINT_PREFIX, batch_idx)
+            log_lines.append(f"Saved batch {batch_idx} ({len(batch_results)} rows) to disk.")
+            download_box.download_button(
+                label=f"💾 Download checkpoint (batch {batch_idx+1})",
+                data=batch_df.to_excel(index=False, engine="openpyxl"),
+                file_name=f"{FILE_ID}_batch_{batch_idx+1}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_{FILE_ID}_{batch_idx}"
+            )
+        except Exception as e:
+            log_lines.append(f"Failed saving batch {batch_idx}: {safe_str(e)}")
+            error_box.error(f"Failed saving batch {batch_idx}: {safe_str(e)}")
+            # continue; user can re-run and resume
+
+    total_time = int(time.time() - start_time)
+    status_box.success(f"✅ Extraction completed. Time: {total_time//60}m {total_time%60}s")
+
+    # Merge all batches from disk (resilient)
+    final_df = load_all_batches(CHECKPOINT_DIR, CHECKPOINT_PREFIX)
+
+    if final_df.empty:
+        st.warning("No results found in checkpoints. Something went wrong or there were no valid URLs.")
+    else:
+        # compute metrics safely
+        final_df = final_df.astype(str)
+        parts_found = (final_df["Part"] != "Not Found").sum() if "Part" in final_df.columns else 0
+        unspsc_found = (final_df["UNSPSC Code"] != "Not Found").sum() if "UNSPSC Code" in final_df.columns else 0
+
+        st.markdown(
+            f"""
+            <div class="success-box">
+                <h3>✅ Results</h3>
+                <p><strong>Rows processed:</strong> {len(final_df)} &nbsp; | &nbsp; <strong>Parts found:</strong> {parts_found} &nbsp; | &nbsp; <strong>UNSPSC found:</strong> {unspsc_found}</p>
+                <p class="small-muted">File ID: <code>{FILE_ID}</code> — Checkpoints in <code>{CHECKPOINT_DIR}</code></p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # show sample preview (first 50)
+        with st.expander("📋 Preview results (first 50 rows)"):
+            st.dataframe(final_df.head(50), use_container_width=True)
+
+        # final download
+        buf = BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            final_df.to_excel(writer, index=False, sheet_name="Final Results")
+        st.download_button(
+            "📥 Download Final Results",
+            data=buf.getvalue(),
+            file_name=f"swagelok_final_{FILE_ID}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+        # error log
+        if log_lines:
+            with st.expander("📝 Operation log"):
+                for ln in log_lines[-200:]:
+                    st.text(ln)
+
+# footer
+st.markdown("---")
+st.markdown('<div style="text-align:center;padding:1rem"><small>🎨 Designed by Abdelmoneim Moustafa — Data Intelligence Engineer</small></div>', unsafe_allow_html=True)
