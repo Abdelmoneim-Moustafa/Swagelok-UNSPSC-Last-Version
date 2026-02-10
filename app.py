@@ -389,7 +389,7 @@ with st.sidebar:
     st.markdown(
         f"""
         **Current Settings**
-        - ⚡ Workers: **{MAX_WORKERS}**
+        - ⚡ Batch Size: **{BATCH_SIZE}**
         - ⏱️ Timeout: **{TIMEOUT}s**
         - 🏭 Company: **{COMPANY_NAME}**
         """
