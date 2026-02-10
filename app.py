@@ -425,7 +425,7 @@ if uploaded_file:
         with st.expander("👁️ Preview"):
             st.dataframe(pd.DataFrame({"Row": range(1, 6), url_column: [u or "Empty" for u in urls[:5]]}))
         
-        if len(valid_count) > 1000:
+        if valid_count > 1000:
             st.markdown("""
             <div class="warning-box">
                 <strong>⚠️ Large File</strong><br>
