@@ -24,6 +24,7 @@ import requests
 import streamlit as st
 
 from io import BytesIO
+from typing import Any
 from typing import Dict, Optional, Tuple, List
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -92,10 +93,28 @@ st.markdown(
 # =========================
 # Utilities: file id, checkpoints
 # =========================
-def get_file_id(uploaded_file: st.uploaded_file_manager.UploadedFile) -> str:
-    """Stable short id (md5 hex12) for an uploaded file's contents."""
-    raw = uploaded_file.getvalue()
+def get_file_id(uploaded_file: Any) -> str:
+    """
+    Stable short id (md5 hex12) for an uploaded file's contents.
+
+    Uses getvalue() when available (Streamlit UploadedFile).
+    Falls back to reading the file-like object if necessary.
+    """
+    try:
+        # Streamlit UploadedFile supports getvalue()
+        raw = uploaded_file.getvalue()
+    except Exception:
+        # Fallback: try reading the stream (some environments provide a file-like object)
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+        raw = uploaded_file.read()
+    # Ensure bytes
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8")
     return hashlib.md5(raw).hexdigest()[:12]
+
 
 
 def make_checkpoint_paths(file_id: str):
