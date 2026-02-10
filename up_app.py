@@ -150,77 +150,14 @@ class SwagelokExtractor:
         
         return last_one['f'], last_one['c']
 
-st.markdown(
-    """
-    <div class="main-header">
-        <h1>🔍 Swagelok UNSPSC Platform</h1>
-        <p>Row-by-Row Processing • Latest UNSPSC • Zero Data Loss • Production Ready</p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown('<div class="main-header"><h1>🔍 Swagelok UNSPSC Platform</h1><p>Row-by-Row • LAST UNSPSC (Fixed!) • Adaptive Theme</p></div>',unsafe_allow_html=True)
+st.markdown('<div class="info-box"><strong>✨ CRITICAL FIX:</strong><br>✅ <strong>LAST UNSPSC:</strong> Takes bottom occurrence <br>✅ <strong>Dark/Light:</strong> Perfect theme support<br>✅ <strong>Row-by-Row:</strong> Individual tracking<br>✅ <strong>Auto-Save:</strong> Every 100 rows</div>',unsafe_allow_html=True)
 
-st.markdown(
-    """
-    <div class="info-box">
-        <strong>✨ CRITICAL FIXES & FEATURES:</strong><br><br>
-
-        ✅ <strong>Accurate UNSPSC Selection:</strong>  
-        Always selects the <em>last / bottom</em> occurrence of the highest UNSPSC version  
-        <small>(e.g. uses <code>40183102</code> instead of <code>40183103</code>)</small><br><br>
-
-        ✅ <strong>Row-by-Row Processing:</strong>  
-        Each URL is processed independently for precise tracking and error isolation<br><br>
-
-        ✅ <strong>Dark / Light Mode:</strong>  
-        Fully adaptive theme with perfect readability<br><br>
-
-        ✅ <strong>Auto-Save Protection:</strong>  
-        Progress is safely saved to disk every <strong>100 rows</strong> — no data loss on sleep or crash
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-# =========================
-# Sidebar
-# =========================
 with st.sidebar:
-    st.markdown("### ⚙️ Configuration")
-    st.markdown(
-        f"""
-        **Current Settings**
-        - ⚡ Workers: **{MAX_WORKERS}**
-        - ⏱️ Timeout: **{TIMEOUT}s**
-        - 🏭 Company: **{COMPANY_NAME}**
-        """
-    )
-
-    st.markdown("---")
-    st.markdown("### 📊 How It Works")
-    st.markdown(
-        """
-        1. 📤 Upload Excel with product URLs  
-        2. 🔍 Auto-detect URL column  
-        3. 🧩 Extract & validate Part Number  
-        4. 🏷️ Select **latest** UNSPSC  
-        5. 📥 Download clean results  
-        """
-    )
-
-    st.markdown("---")
-    st.markdown("### 🎯 Quality Checks")
-    st.success(
-        """
-        ✅ Part validated against URL  
-        ✅ Latest UNSPSC version selected  
-        ✅ Last occurrence logic applied  
-        ✅ Row-by-row integrity  
-        ✅ No duplicates  
-        ✅ Complete structured output  
-        """
-    )
-
+    st.markdown("### ⚙️ Config")
+    st.code(f"Timeout: {TIMEOUT}s\nCheckpoint: {CHECKPOINT_INTERVAL}\nProcessing: Sequential")
+    st.markdown("### 🎯 UNSPSC Fix")
+    st.info("When multiple same versions exist, takes LAST (bottom) occurrence")
     st.markdown("---\n**🎨 Abdelmoneim Moustafa**\n*Data Intelligence Engineer*")
 
 if f:=st.file_uploader("📤 Upload Excel",type=["xlsx","xls"]):
