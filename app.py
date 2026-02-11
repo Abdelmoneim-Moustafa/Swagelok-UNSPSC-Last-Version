@@ -215,7 +215,7 @@ st.markdown('<div class="header"><h1>🔍 Swagelok UNSPSC Scraper</h1><p>Accurat
 st.markdown("""
 <div class="info">
 <strong>✨ REBUILT FROM SCRATCH:</strong><br>
-✅ <strong>Correct Part:</strong> From Specifications title (NY-814-1 — Nylon...)<br>
+✅ <strong>Correct Part:</strong> From Specifications title<br>
 ✅ <strong>All UNSPSC:</strong> Extracts all versions, returns LAST of highest<br>
 ✅ <strong>Fast:</strong> 8 parallel workers, ~16 URLs/second<br>
 ✅ <strong>Resume:</strong> Download checkpoint anytime, continue later
@@ -226,7 +226,13 @@ with st.sidebar:
     st.markdown("### ⚙️ Settings")
     st.code(f"Workers: {MAX_WORKERS}\nTimeout: {TIMEOUT}s\nCheckpoint: {CHECKPOINT_SIZE} rows")
     st.markdown("---")
-    st.markdown("**🎨 Abdelmoneim Moustafa**\n\n*Data Intelligence Engineer*")
+    st.markdown(
+        """
+        **🎨 Abdelmoneim Moustafa**
+        \n
+        *Data Intelligence Engineer*
+        """
+        )
 
 uploaded = st.file_uploader("📤 Upload Excel", type=["xlsx", "xls"])
 
