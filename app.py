@@ -2,8 +2,8 @@
 🔍 Swagelok UNSPSC Scraper - REBUILT FROM SCRATCH
 Extracts CORRECT Part Number and UNSPSC Code
 
-✅ Part: From Specifications title (NY-814-1 — Nylon...)
-✅ UNSPSC: Last version from table (17.1001)
+✅ Part: From Specifications title
+✅ UNSPSC: Last version from the table 
 ✅ Checkpoints: Resume anytime, download without closing
 ✅ Fast: Parallel processing with auto-save
 
@@ -226,7 +226,7 @@ with st.sidebar:
     st.markdown("### ⚙️ Settings")
     st.code(f"Workers: {MAX_WORKERS}\nTimeout: {TIMEOUT}s\nCheckpoint: {CHECKPOINT_SIZE} rows")
     st.markdown("---")
-    st.markdown("**🎨 Abdelmoneim Moustafa**\n*Data Intelligence Engineer*")
+    st.markdown("**🎨 Abdelmoneim Moustafa**\n\n*Data Intelligence Engineer*")
 
 uploaded = st.file_uploader("📤 Upload Excel", type=["xlsx", "xls"])
 
