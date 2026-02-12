@@ -14,201 +14,22 @@ CHECKPOINT_INTERVAL = 100  # save checkpoint every 100 URLs
 st.set_page_config(page_title="Swagelok UNSPSC Scraper", page_icon="🔍", layout="wide")
 st.markdown("""
     <style>
-    /* ==================== THEME VARIABLES ==================== */
-    /* Light Mode (Default) */
-    :root {
-        --info-bg: #e3f2fd;
-        --card-bg: #ffffff;
-        --border-color: #e0e0e0;
-        --error-bg: #ffebee;
-        --text-color: #333333;
-        --shadow: rgba(0, 0, 0, 0.1);
-    }
-    
-    /* Dark Mode - System Preference */
-    @media (prefers-color-scheme: dark) {
-        :root {
-            --info-bg: #1a237e;
-            --card-bg: #1e1e1e;
-            --border-color: #424242;
-            --error-bg: #b71c1c;
-            --text-color: #e0e0e0;
-            --shadow: rgba(0, 0, 0, 0.4);
-        }
-    }
-    
-    /* Dark Mode - Streamlit Theme */
-    [data-theme="dark"] {
-        --info-bg: #1a237e;
-        --card-bg: #1e1e1e;
-        --border-color: #424242;
-        --error-bg: #b71c1c;
-        --text-color: #e0e0e0;
-        --shadow: rgba(0, 0, 0, 0.4);
-    }
-    
-    /* ==================== HIDE UNWANTED ELEMENTS ==================== */
-    /* Remove Streamlit branding and menu */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    .stDeployButton {display: none;}
-    
-    /* Remove horizontal lines after dataframes */
-    hr {display: none !important;}
-    .stHorizontalBlock {border: none !important;}
-    
-    /* ==================== CUSTOM COMPONENTS ==================== */
-    .main-header {
-        background: linear-gradient(135deg, #667eea, #764ba2);
-        padding: 2.5rem;
-        border-radius: 15px;
-        color: white;
-        text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
-    }
-    
-    .info-box {
-        background: var(--info-bg);
-        border-left: 5px solid #2196f3;
-        padding: 1.5rem;
-        border-radius: 12px;
-        margin: 1rem 0;
-        color: var(--text-color);
-        box-shadow: 0 2px 8px var(--shadow);
-    }
-    
-    .success-box {
-        background: linear-gradient(135deg, #11998e, #38ef7d);
-        padding: 2rem;
-        border-radius: 15px;
-        color: white;
-        text-align: center;
-        margin: 1.5rem 0;
-        box-shadow: 0 8px 20px rgba(17, 153, 142, 0.3);
-    }
-    
-    .progress-card {
-        background: var(--card-bg);
-        padding: 1.5rem;
-        border-radius: 12px;
-        margin: 1rem 0;
-        border: 1px solid var(--border-color);
-        color: var(--text-color);
-        box-shadow: 0 2px 8px var(--shadow);
-    }
-    
-    .error-card {
-        background: var(--error-bg);
-        border-left: 5px solid #f44336;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 0.5rem 0;
-        color: var(--text-color);
-        box-shadow: 0 2px 8px var(--shadow);
-    }
-    
-    /* ==================== STREAMLIT COMPONENT STYLING ==================== */
-    /* Progress bar */
-    .stProgress > div > div > div > div {
-        background: linear-gradient(90deg, #667eea, #764ba2);
-    }
-    
-    /* Metrics */
-    [data-testid="stMetricValue"] {
-        color: var(--text-color);
-        font-size: 2rem;
-        font-weight: 700;
-    }
-    
-    [data-testid="stMetricLabel"] {
-        color: var(--text-color);
-        opacity: 0.8;
-    }
-    
-    /* Buttons */
-    .stButton > button {
-        background: linear-gradient(135deg, #667eea, #764ba2);
-        color: white;
-        border: none;
-        padding: 0.75rem 2rem;
-        border-radius: 10px;
-        font-weight: 600;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
-    }
-    
-    /* Download buttons */
-    .stDownloadButton > button {
-        background: linear-gradient(135deg, #11998e, #38ef7d);
-        color: white;
-        border: none;
-        padding: 0.75rem 2rem;
-        border-radius: 10px;
-        font-weight: 600;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 12px rgba(17, 153, 142, 0.3);
-    }
-    
-    .stDownloadButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(17, 153, 142, 0.5);
-    }
-    
-    /* Radio buttons */
-    .stRadio > label {
-        color: var(--text-color);
-    }
-    
-    /* File uploader */
-    .stFileUploader {
-        background: var(--card-bg);
-        border: 2px dashed var(--border-color);
-        border-radius: 12px;
-        padding: 2rem;
-    }
-    
-    /* Dataframe styling */
-    .dataframe {
-        border: 1px solid var(--border-color) !important;
-        background: var(--card-bg);
-    }
-    
-    .dataframe th {
-        background: linear-gradient(135deg, #667eea, #764ba2) !important;
-        color: white !important;
-        font-weight: 600;
-    }
-    
-    .dataframe td {
-        color: var(--text-color);
-    }
-    
-    /* Remove unwanted spacing and lines */
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 0;
-    }
-    
-    .element-container {
-        margin-bottom: 1rem;
-    }
-    
-    /* Clean layout */
-    section[data-testid="stSidebar"] {
-        background: var(--card-bg);
-        border-right: 1px solid var(--border-color);
-    }
+    .main-header{background:linear-gradient(135deg,#667eea,#764ba2);padding:2.5rem;
+      border-radius:15px;color:white;text-align:center;margin-bottom:2rem;
+      box-shadow:0 8px 20px rgba(102,126,234,0.3)}
+    .info-box{background:var(--info-bg,#e3f2fd);border-left:5px solid #2196f3;
+      padding:1.5rem;border-radius:12px;margin:1rem 0}
+    .success-box{background:linear-gradient(135deg,#11998e,#38ef7d);
+      padding:2rem;border-radius:15px;color:white;text-align:center;
+      margin:1.5rem 0;box-shadow:0 8px 20px rgba(17,153,142,0.3)}
+    .progress-card{background:var(--card-bg,#fff);padding:1.5rem;
+      border-radius:12px;margin:1rem 0;border:1px solid var(--border-color,#e0e0e0)}
+    .error-card{background:var(--error-bg,#ffebee);border-left:5px solid #f44336;
+      padding:1rem;border-radius:8px;margin:0.5rem 0}
     </style>
     """, unsafe_allow_html=True)
 st.markdown('<div class="main-header"><h1>🔍 Swagelok UNSPSC Platform</h1>'
-            '<p>Extract Part - UNSPSC feature & code from Swagelok product pages</p></div>', unsafe_allow_html=True)
+            '<p>Extract Part • UNSPSC feature & code from Swagelok product pages</p></div>', unsafe_allow_html=True)
 st.markdown('<div class="info-box"><strong>🔄 Workflow:</strong> Upload Excel → Process rows → Download results</div>', unsafe_allow_html=True)
 
 # Mode selection: new upload vs resume
