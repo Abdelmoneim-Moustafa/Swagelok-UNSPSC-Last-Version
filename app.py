@@ -17,65 +17,46 @@ st.set_page_config(page_title="Swagelok UNSPSC Scraper — Clean UI", page_icon=
 # ---------- Theme CSS (light & dark) ----------
 LIGHT_CSS = """
 :root{
-  --bg:#ffffff;
+  --bg:#f6f8fc;
   --card:#ffffff;
-  --muted:#6b7280;
-  --accent1:#667eea;
-  --accent2:#764ba2;
-  --success:#16a34a;
-  --danger:#ef4444;
-  --border:rgba(15,23,42,0.06);
 }
 
-/* Remove repeating background lines seen in screenshots */
-.stApp, .main, .block-container {
-  background: var(--bg) !important;
+/* Clean soft light background */
+.stApp{
+  background: linear-gradient(180deg,#f6f8fc 0%, #eef2f9 100%) !important;
+  background-attachment: fixed;
+}
+
+.block-container{
+  padding-top: 2rem;
+}
+
+/* Remove any unwanted lines or patterns */
+.stApp, .main{
   background-image: none !important;
 }
-
-/* Clean header */
-.header { padding: 28px; border-radius: 14px; color: white; text-align: left; }
-.header h1{ margin:0; font-size:28px }
-.header p{ margin:4px 0 0 0; opacity:0.95 }
-
-.card { background:var(--card); padding:16px; border-radius:12px; box-shadow: 0 6px 18px rgba(17,24,39,0.06); border:1px solid var(--border); }
-.metrics .stMetric{ padding: 8px 10px }
-
-/* Progress log styling */
-.progress-log{ max-height:320px; overflow:auto; padding:8px; border-radius:8px }
-.progress-row{ padding:10px; border-radius:8px; margin-bottom:8px; background: linear-gradient(90deg, rgba(230,240,255,0.7), rgba(245,248,255,0.6)); }
-
-/* Clean table: remove gridlines */
-.stTable table, .stDataFrame table{ border-collapse:collapse !important }
-.stTable th, .stTable td, .stDataFrame th, .stDataFrame td{ border:none !important; }
-
-/* Buttons & download */
-.stButton>button { padding:8px 14px }
-
 """
 
 DARK_CSS = """
 :root{
-  --bg:#0b1220;
-  --card:#071024;
-  --muted:#9ca3af;
-  --accent1:#7c3aed;
-  --accent2:#06b6d4;
-  --success:#34d399;
-  --danger:#fb7185;
-  --border:rgba(255,255,255,0.06);
+  --bg:#0f172a;
+  --card:#111827;
 }
 
-.stApp, .main, .block-container { background: var(--bg) !important; background-image:none !important }
-.header { padding: 28px; border-radius: 14px; color: white; text-align: left; }
-.header h1{ margin:0; font-size:28px }
-.header p{ margin:4px 0 0 0; opacity:0.9 }
-.card { background:var(--card); padding:16px; border-radius:12px; box-shadow: 0 6px 18px rgba(2,6,23,0.6); border:1px solid var(--border); }
-.metrics .stMetric{ padding: 8px 10px }
-.progress-log{ max-height:320px; overflow:auto; padding:8px; border-radius:8px }
-.progress-row{ padding:10px; border-radius:8px; margin-bottom:8px; background: linear-gradient(90deg, rgba(10,20,30,0.45), rgba(6,8,16,0.45)); }
-.stTable table, .stDataFrame table{ border-collapse:collapse !important }
-.stTable th, .stTable td, .stDataFrame th, .stDataFrame td{ border:none !important; }
+/* Smooth professional dark gradient */
+.stApp{
+  background: linear-gradient(180deg,#0f172a 0%, #111827 100%) !important;
+  background-attachment: fixed;
+}
+
+.block-container{
+  padding-top: 2rem;
+}
+
+/* Remove unwanted lines */
+.stApp, .main{
+  background-image: none !important;
+}
 """
 
 # Theme selection UI
@@ -97,7 +78,7 @@ col1, col2 = st.columns([3,1])
 with col1:
     st.markdown(f"<div class='header' style='background: linear-gradient(135deg,{"#667eea"},{"#764ba2"});'>"
                 f"<h1>🔍 Swagelok UNSPSC Extractor</h1>"
-                f"<p>Upload product page URLs (Excel) and extract Part, UNSPSC feature & code.</p></div>", unsafe_allow_html=True)
+                f"<p>Upload product page URLs (Excel) and extract Part  - UNSPSC feature & code.</p></div>", unsafe_allow_html=True)
 with col2:
     st.markdown("<div style='text-align:right'><img src='https://raw.githubusercontent.com/Abdelmoneim-Moustafa/Swagelok-UNSPSC-Last-Version/main/logo.png' width='64' onerror='this.style.display=\"none\"'></div>", unsafe_allow_html=True)
 
