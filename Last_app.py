@@ -85,10 +85,11 @@ if uploaded_file:
         start_time = time.time()
         errors = []
         
+        progress_bar = st.progress(0)   # create ONCE before loop
         for idx in range(start_idx, total):
             url = urls[idx]
             row_num = idx + 1
-            st.progress((idx+1) / total)  # update progress bar
+            progress_bar.progress((idx+1) / total)  # update only
             
             # Initialize default result
             row_result = {
